@@ -2,20 +2,19 @@ extends layout
 
 block content
   h1= title
-  p Welcome to our test
+  div(class="row")
+    div(class="col-8")
+        p 
+            | This is the test application that is used for our load testing. It is made up of some static
+            | assets (such as images and scripts) as well as some dynamic content (which is loaded via some
+            | script calls to web services). 
 
-  // Wrapper
-  #wrapper
+        p
+            | Additional info that is relevant to the exercise may be added here at a later date.
+    
+        h2 Dynamic data
 
-    // USER LIST
-    h2 User List
-    #userList
-      table
-        thead
-          th UserName
-          th Email
-          th Delete?
-        tbody
-    // /USER LIST
+        div(id="DynamicData")
 
-  // /WRAPPER
+    div(class="col")
+        img(src="/images/AWS-reInvent-2018.png", alt="AWS re:Invent 2018", class="img-fluid")
