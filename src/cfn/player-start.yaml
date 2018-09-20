@@ -1,0 +1,229 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Resources used in the Scaling Web Applications lab
+
+Resources:
+
+  ApplicationComputeVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  ApplicationSubnetA:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ApplicationComputeVPC
+      CidrBlock: 192.168.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  ApplicationSubnetB:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ApplicationComputeVPC
+      CidrBlock: 192.168.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  ApplicationSubnetC:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ApplicationComputeVPC
+      CidrBlock: 192.168.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  ApplicationInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+
+  ApplicationInternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref ApplicationInternetGateway
+      VpcId: !Ref ApplicationComputeVPC
+
+  ApplicationSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Rules for octank app layer network
+      VpcId: !Ref ApplicationComputeVPC
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: 192.168.0.0/16
+
+  ApplicationRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref ApplicationComputeVPC
+
+  ApplicationSubnetARouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref ApplicationRouteTable
+      SubnetId: !Ref ApplicationSubnetA
+
+  ApplicationSubnetBRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref ApplicationRouteTable
+      SubnetId: !Ref ApplicationSubnetB
+
+  ApplicationSubnetCRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref ApplicationRouteTable
+      SubnetId: !Ref ApplicationSubnetC
+
+  ApplicationPublicTrafficRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ApplicationRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ApplicationInternetGateway
+
+  ApplicationDefaultDHCPOptions:
+    Type: 'AWS::EC2::DHCPOptions'
+    Properties:
+      DomainNameServers:
+        - 8.8.8.8
+
+  ApplicationVPCDHCPOptions:
+    Type: 'AWS::EC2::VPCDHCPOptionsAssociation'
+    Properties:
+      DhcpOptionsId: !Ref ApplicationDefaultDHCPOptions
+      VpcId: !Ref ApplicationComputeVPC
+
+  WebAppInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "sts:AssumeRole"
+            Principal:
+              Service: ec2.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+
+  WebAppServiceRole:
+    Type: 'AWS::IAM::ServiceLinkedRole'
+    Properties:
+      AWSServiceName: elasticbeanstalk.amazonaws.com
+      Description: "Allows Elastic Beanstalk to create and manage AWS resources on your behalf."
+
+  WebApp:
+    Type: "AWS::ElasticBeanstalk::Application"
+    Properties:
+      ApplicationName: DemoWebApp
+
+  WebAppEnvironment:
+    Type: "AWS::ElasticBeanstalk::Environment"
+    Properties:
+      ApplicationName: !Ref WebApp
+      EnvironmentName: Environment-1
+      OptionSettings: 
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !GetAtt WebAppInstanceRole.Arn
+
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/elasticbeanstalk.amazonaws.com/AWSServiceRoleForElasticBeanstalk
+
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: t2.small
+
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !Ref ApplicationComputeVPC
+
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Sub ${ApplicationSubnetA},${ApplicationSubnetB},${ApplicationSubnetC}
+
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value: !Sub ${ApplicationSubnetA},${ApplicationSubnetB},${ApplicationSubnetC}
+
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !Ref WebServerSecurityGroup
+
+        - Namespace: aws:elb:loadbalancer
+          OptionName: SecurityGroups
+          Value: !Ref WebServerSecurityGroup
+
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.3 running Node.js"
+    DependsOn:
+      - ApplicationInternetGatewayAttachment
+      - WebAppServiceRole
+
+  DatabaseServer:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      AllocatedStorage: 40
+      DBInstanceClass: db.t2.small
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      Engine: mariadb
+      EngineVersion: 10.2.15
+      MasterUsername: Administrator 
+      MasterUserPassword: WebApp2018!
+      VPCSecurityGroups:
+        - !Ref DBServerSecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties: 
+      DBSubnetGroupDescription: DemoWebAppDbSubnets
+      DBSubnetGroupName: DemoWebAppDbSubnets
+      SubnetIds:
+        - !Ref ApplicationSubnetA
+        - !Ref ApplicationSubnetB
+        - !Ref ApplicationSubnetC
+
+  WebServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: Web Server Security Group
+      GroupDescription: Rules applied to web servers
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref ApplicationComputeVPC
+
+  DBServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: Database Server Security Group
+      GroupDescription: Rules applied to database servers
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 192.168.0.0/24
+      VpcId: !Ref ApplicationComputeVPC
