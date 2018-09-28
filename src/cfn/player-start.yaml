@@ -10,6 +10,7 @@ Resources:
       CidrBlock: 192.168.0.0/16
       EnableDnsHostnames: true
       EnableDnsSupport: true
+  
   ApplicationSubnetA:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -172,7 +173,7 @@ Resources:
           OptionName: SecurityGroups
           Value: !Ref WebServerSecurityGroup
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.3 running Node.js"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.4 running Node.js"
     DependsOn:
       - ApplicationInternetGatewayAttachment
       - WebAppServiceRole
@@ -233,3 +234,23 @@ Resources:
           ToPort: 3306
           CidrIp: 192.168.0.0/24
       VpcId: !Ref ApplicationComputeVPC
+
+  PresentationLayerCDN:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        DefaultCacheBehavior:
+          ForwardedValues:
+            QueryString: 'false'
+          TargetOriginId: MainSite
+          ViewerProtocolPolicy: allow-all
+          MinTTL: 0
+          MaxTTL: 60
+          DefaultTTL: 30
+        Enabled: true
+        Origins:
+          - DomainName: !GetAtt WebAppEnvironment.EndpointURL
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+            Id: MainSite
