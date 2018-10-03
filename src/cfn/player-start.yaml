@@ -6,7 +6,7 @@ Parameters:
 
   StagingBucket:
     Type: String
-    Default: scalingwebapps-staging
+    Default: staging-scalingwebapps
     Description: The name of the S3 bucket that contains the staging resources for this deployment
 
 Resources:
