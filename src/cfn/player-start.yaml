@@ -9,6 +9,11 @@ Parameters:
     Default: staging-scalingwebapps
     Description: The name of the S3 bucket that contains the staging resources for this deployment
 
+  DBSnapshotArn:
+    Type: String
+    Default: arn:aws:rds:us-west-2:617055091360:snapshot:draftdb
+    Description: The ARN of the snapshot to restore to the RDS instance
+
 Resources:
 
   ApplicationComputeVPC:
@@ -205,6 +210,7 @@ Resources:
       EngineVersion: 10.2.15
       MasterUsername: Administrator 
       MasterUserPassword: WebApp2018!
+      DBSnapshotIdentifier: !Ref DBSnapshotArn
       VPCSecurityGroups:
         - !Ref DBServerSecurityGroup
 
