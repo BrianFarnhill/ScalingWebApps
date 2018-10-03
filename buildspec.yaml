@@ -1,0 +1,15 @@
+version: 1.0
+
+phases:
+
+  install:
+    commands:
+      - npm install --prefix src/web/start
+
+  build:
+    commands:
+     - ./build/build.sh
+
+  post_build:
+    commands:
+     - ./build/publish.sh
