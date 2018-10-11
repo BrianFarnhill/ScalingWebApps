@@ -130,7 +130,7 @@ Resources:
         - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
         - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
 
-  WebAppServiceRole:
+  ElasticBeanstalkServiceRole:
     Type: 'AWS::IAM::ServiceLinkedRole'
     Properties:
       AWSServiceName: elasticbeanstalk.amazonaws.com
@@ -160,7 +160,7 @@ Resources:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
       ApplicationName: !Ref WebApp
-      EnvironmentName: Environment-1
+      EnvironmentName: Production
       OptionSettings: 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: IamInstanceProfile
@@ -173,6 +173,14 @@ Resources:
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
           Value: t2.small
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: 3
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value: 3
 
         - Namespace: aws:ec2:vpc
           OptionName: VPCId
@@ -234,7 +242,7 @@ Resources:
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
       - ApplicationInternetGatewayAttachment
-      - WebAppServiceRole
+      - ElasticBeanstalkServiceRole
 
   DatabaseServer:
     Type: "AWS::RDS::DBInstance"
@@ -313,3 +321,173 @@ Resources:
               HTTPPort: 80
               OriginProtocolPolicy: http-only
             Id: MainSite
+
+  LoadTestComputeVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  
+  LoadTestSubnetA:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref LoadTestComputeVPC
+      CidrBlock: 192.168.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  LoadTestSubnetB:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref LoadTestComputeVPC
+      CidrBlock: 192.168.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  LoadTestSubnetC:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref LoadTestComputeVPC
+      CidrBlock: 192.168.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+
+  LoadTestInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+
+  LoadTestInternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref LoadTestInternetGateway
+      VpcId: !Ref LoadTestComputeVPC
+
+  LoadTestingWebServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: Load Testing Web Server Security Group
+      GroupDescription: Rules applied to web servers used for the load testing
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref ApplicationComputeVPC
+
+  LoadTestAppInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "sts:AssumeRole"
+            Principal:
+              Service: ec2.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+
+  LoadTestAppInstancePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: LocustPermissions
+      Roles:
+        - !Ref LoadTestAppInstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+            Resource: !Sub "arn:aws:dynamodb:*:${AWS::AccountId}:table/*-stack-MasterIPTable*"
+          - Effect: Allow
+            Action:
+              - elasticbeanstalk:DescribeEnvironmentResources
+              - autoscaling:DescribeAutoScalingGroups
+              - cloudformation:ListStackResources
+            Resource: '*'
+
+  LoadTestApp:
+    Type: "AWS::ElasticBeanstalk::Application"
+    Properties:
+      ApplicationName: LoadTester
+
+  LoadTestStartVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref LoadTestApp
+      Description: Locust including load tests configured for the first stage of testing
+      SourceBundle:
+        S3Bucket: !Ref StagingBucket
+        S3Key: loadtest/start.zip
+
+  LoadTestAppEnvironment:
+    Type: "AWS::ElasticBeanstalk::Environment"
+    Properties:
+      ApplicationName: !Ref WebApp
+      EnvironmentName: LoadTestingHosts
+      OptionSettings: 
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !GetAtt LoadTestAppInstancePolicy.Arn
+
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/elasticbeanstalk.amazonaws.com/AWSServiceRoleForElasticBeanstalk
+
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: t2.small
+
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !Ref LoadTestComputeVPC
+
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Sub ${LoadTestSubnetA},${LoadTestSubnetB},${LoadTestSubnetC}
+
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value: !Sub ${ApplicationSubnetA},${ApplicationSubnetB},${ApplicationSubnetC}
+
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !Ref LoadTestingWebServerSecurityGroup
+
+        - Namespace: aws:elb:loadbalancer
+          OptionName: SecurityGroups
+          Value: !Ref LoadTestingWebServerSecurityGroup
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PORT
+          Value: 80
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: 3
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value: 3
+
+      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.5 running Java 8"
+      VersionLabel: !Ref LoadTestStartVersion
+    DependsOn:
+      - ApplicationInternetGatewayAttachment
+      - ElasticBeanstalkServiceRole
+      - LoadTestAppInstancePolicy
