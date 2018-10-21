@@ -254,6 +254,7 @@ Resources:
       EngineVersion: 10.2.15
       MasterUsername: Administrator 
       MasterUserPassword: WebApp2018!
+      MultiAZ: true
       DBSnapshotIdentifier: !Ref DBSnapshotArn
       VPCSecurityGroups:
         - !Ref DBServerSecurityGroup
@@ -322,69 +323,6 @@ Resources:
               OriginProtocolPolicy: http-only
             Id: MainSite
 
-  LoadTestComputeVPC:
-    Type: 'AWS::EC2::VPC'
-    Properties:
-      CidrBlock: 192.168.0.0/16
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-  
-  LoadTestSubnetA:
-    Type: 'AWS::EC2::Subnet'
-    Properties:
-      VpcId: !Ref LoadTestComputeVPC
-      CidrBlock: 192.168.0.0/24
-      MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select 
-        - 0
-        - Fn::GetAZs: !Ref 'AWS::Region'
-
-  LoadTestSubnetB:
-    Type: 'AWS::EC2::Subnet'
-    Properties:
-      VpcId: !Ref LoadTestComputeVPC
-      CidrBlock: 192.168.1.0/24
-      MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select 
-        - 1
-        - Fn::GetAZs: !Ref 'AWS::Region'
-
-  LoadTestSubnetC:
-    Type: 'AWS::EC2::Subnet'
-    Properties:
-      VpcId: !Ref LoadTestComputeVPC
-      CidrBlock: 192.168.2.0/24
-      MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select 
-        - 2
-        - Fn::GetAZs: !Ref 'AWS::Region'
-
-  LoadTestInternetGateway:
-    Type: 'AWS::EC2::InternetGateway'
-
-  LoadTestInternetGatewayAttachment:
-    Type: 'AWS::EC2::VPCGatewayAttachment'
-    Properties:
-      InternetGatewayId: !Ref LoadTestInternetGateway
-      VpcId: !Ref LoadTestComputeVPC
-
-  LoadTestingWebServerSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
-    Properties: 
-      GroupName: Load Testing Web Server Security Group
-      GroupDescription: Rules applied to web servers used for the load testing
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-      VpcId: !Ref ApplicationComputeVPC
-
   LoadTestAppInstanceRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -421,6 +359,12 @@ Resources:
               - cloudformation:ListStackResources
             Resource: '*'
 
+  LoadTestInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+       - !Ref LoadTestAppInstanceRole
+
   LoadTestApp:
     Type: "AWS::ElasticBeanstalk::Application"
     Properties:
@@ -438,12 +382,12 @@ Resources:
   LoadTestAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
-      ApplicationName: !Ref WebApp
+      ApplicationName: !Ref LoadTestApp
       EnvironmentName: LoadTestingHosts
       OptionSettings: 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: IamInstanceProfile
-          Value: !GetAtt LoadTestAppInstancePolicy.Arn
+          Value: !GetAtt LoadTestInstanceProfile.Arn
 
         - Namespace: aws:elasticbeanstalk:environment
           OptionName: ServiceRole
@@ -453,29 +397,13 @@ Resources:
           OptionName: InstanceType
           Value: t2.small
 
-        - Namespace: aws:ec2:vpc
-          OptionName: VPCId
-          Value: !Ref LoadTestComputeVPC
-
-        - Namespace: aws:ec2:vpc
-          OptionName: Subnets
-          Value: !Sub ${LoadTestSubnetA},${LoadTestSubnetB},${LoadTestSubnetC}
-
-        - Namespace: aws:ec2:vpc
-          OptionName: ELBSubnets
-          Value: !Sub ${ApplicationSubnetA},${ApplicationSubnetB},${ApplicationSubnetC}
-
-        - Namespace: aws:autoscaling:launchconfiguration
-          OptionName: SecurityGroups
-          Value: !Ref LoadTestingWebServerSecurityGroup
-
-        - Namespace: aws:elb:loadbalancer
-          OptionName: SecurityGroups
-          Value: !Ref LoadTestingWebServerSecurityGroup
-
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: PORT
           Value: 80
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: TARGET_URL
+          Value: !Sub "http://${WebAppEnvironment.EndpointURL}"
 
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
@@ -485,9 +413,16 @@ Resources:
           OptionName: MaxSize
           Value: 3
 
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: FORCE_CHANGE_VALUE
+          Value: "1"
+
       SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.5 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion
     DependsOn:
-      - ApplicationInternetGatewayAttachment
       - ElasticBeanstalkServiceRole
       - LoadTestAppInstancePolicy
