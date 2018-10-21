@@ -238,6 +238,10 @@ Resources:
           OptionName: static/popper
           Value: node_modules/popper.js/dist
 
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: DB_SERVER
+          Value: !GetAtt DatabaseServer.Endpoint.Address
+
       SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.4 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
@@ -416,10 +420,6 @@ Resources:
         - Namespace: aws:elasticbeanstalk:healthreporting:system
           OptionName: SystemType
           Value: enhanced
-
-        - Namespace: aws:elasticbeanstalk:application:environment
-          OptionName: FORCE_CHANGE_VALUE
-          Value: "1"
 
       SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.5 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion

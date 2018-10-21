@@ -1,31 +1,22 @@
 var express = require('express');
 var router = express.Router();
+var mysql = require('mysql');
 
 router.get('/', function(req, res, next) {
-    res.json({
-        data: [
-            {
-                ID: 1,
-                Name: "hello"
-            },
-            {
-                ID: 2,
-                Name: "world"
-            },
-            {
-                ID: 3,
-                Name: "Brian"
-            },
-            {
-                ID: 4,
-                Name: "was"
-            },
-            {
-                ID: 5,
-                Name: "here"
-            }
-        ]
-    });
+    var con = mysql.createConnection({
+        host: process.env.DB_SERVER,
+        user: "builder",
+        password: "WebApp2018!",
+        database: "amznreviews"
+      });
+
+      con.connect(function(err) {
+        if (err) throw err;
+        con.query("select product_title, count(*) as total_products from auto group by product_title order by total_products DESC limit 100;", function (err, result, fields) {
+          if (err) throw err;
+          res.json(result);
+        });
+      });
 });
 
 module.exports = router;

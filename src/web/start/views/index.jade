@@ -10,11 +10,18 @@ block content
             | script calls to web services). 
 
         p
-            | Additional info that is relevant to the exercise may be added here at a later date.
-    
-        h2 Dynamic data
+            | Below is a table that is dynamically loaded from the database, calling a query that is
+            | typically fairly long running. During the exervise we'll aim to improve this so that additional
+            | requests can be handled by the web server.
 
-        div(id="DynamicData")
+        table(class="table table-striped")
+            thead
+                tr
+                    th(scope="col", style="width:75%") Product Name
+                    th(scope="col", style="width:25%") Number of entries
+            tbody(id="DynamicData")
+                th(scope="row")
+                    img(src="/images/loading.gif", alt="Loading animation", class="img-fluid")
 
     div(class="col")
         img(src="/images/AWS-reInvent-2018.png", alt="AWS re:Invent 2018", class="img-fluid")
