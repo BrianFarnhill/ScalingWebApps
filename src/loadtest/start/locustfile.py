@@ -13,20 +13,56 @@
 # https://aws.amazon.com/blogs/devops/using-locust-on-aws-elastic-beanstalk-for-distributed-load-generation-and-testing/ 
 
 import os
-import string
-import random
-import json
-import time
-import boto3
-import uuid
+#import string
+#import random
+#import json
+#import time
+#import boto3
+#import uuid
 from locust import HttpLocust, TaskSet, task
-from requests_aws4auth import AWS4Auth
+#from requests_aws4auth import AWS4Auth
 
 
 class MyTaskSet(TaskSet):
     @task(1000)
-    def basicCall(self):
+    def homePage(self):
         self.client.get("/")
+
+    @task(1000)
+    def loadingGif(self):
+        self.client.get("/images/loading.gif")
+
+    @task(1000)
+    def mainLogo(self):
+        self.client.get("/images/AWS-reInvent-2018.png")
+
+    @task(1000)
+    def jqueryjs(self):
+        self.client.get("/static/jquery/jquery.min.js")
+
+    @task(1000)
+    def bootstrapcss(self):
+        self.client.get("/static/bootstrap/css/bootstrap.min.css")
+
+    @task(1000)
+    def maincss(self):
+        self.client.get("/stylesheets/style.css")
+
+    @task(1000)
+    def popperjs(self):
+        self.client.get("/static/popper/popper.min.js")
+
+    @task(1000)
+    def bootstrapjs(self):
+        self.client.get("/static/bootstrap/js/bootstrap.min.js")
+
+    @task(1000)
+    def loaderjs(self):
+        self.client.get("/javascripts/loader.js")
+
+    @task(1000)
+    def data(self):
+        self.client.get("/data")
 
     # @task(1000)
     # def sampleOne(self):

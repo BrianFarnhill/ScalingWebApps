@@ -172,15 +172,15 @@ Resources:
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
-          Value: t2.small
+          Value: c5.large
 
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
-          Value: 3
+          Value: 2
 
         - Namespace: aws:autoscaling:asg
           OptionName: MaxSize
-          Value: 3
+          Value: 4
 
         - Namespace: aws:ec2:vpc
           OptionName: VPCId
@@ -209,6 +209,10 @@ Resources:
         - Namespace: aws:elasticbeanstalk:container:nodejs
           OptionName: NodeCommand
           Value: "npm start"
+
+        - Namespace: aws:elasticbeanstalk:container:nodejs
+          OptionName: NodeVersion
+          Value: "8.11.4"
 
         - Namespace: aws:elasticbeanstalk:container:nodejs
           OptionName: ProxyServer
@@ -242,6 +246,10 @@ Resources:
           OptionName: DB_SERVER
           Value: !GetAtt DatabaseServer.Endpoint.Address
 
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+
       SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.4 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
@@ -260,6 +268,7 @@ Resources:
       MasterUserPassword: WebApp2018!
       MultiAZ: true
       DBSnapshotIdentifier: !Ref DBSnapshotArn
+      StorageType: gp2
       VPCSecurityGroups:
         - !Ref DBServerSecurityGroup
 
@@ -304,7 +313,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 192.168.0.0/24
+          CidrIp: 192.168.0.0/16
       VpcId: !Ref ApplicationComputeVPC
 
   PresentationLayerCDN:
@@ -399,7 +408,7 @@ Resources:
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
-          Value: t2.small
+          Value: c5.xlarge
 
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: PORT
@@ -411,11 +420,11 @@ Resources:
 
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
-          Value: 3
+          Value: 1
 
         - Namespace: aws:autoscaling:asg
           OptionName: MaxSize
-          Value: 3
+          Value: 1
 
         - Namespace: aws:elasticbeanstalk:healthreporting:system
           OptionName: SystemType
