@@ -11,7 +11,7 @@ Parameters:
 
   DBSnapshotArn:
     Type: String
-    Default: arn:aws:rds:us-west-2:617055091360:snapshot:draftdb
+    Default: arn:aws:rds:us-west-2:617055091360:snapshot:amznreviews-indexed
     Description: The ARN of the snapshot to restore to the RDS instance
 
 Resources:
@@ -129,6 +129,17 @@ Resources:
         - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
         - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
         - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+      Policies:
+        - PolicyName: SetT3Unlimited
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Sid: InstanceCreditPolicy
+              Effect: Allow
+              Action:
+                - ec2:ModifyInstanceCreditSpecification
+                - ec2:DescribeInstanceCreditSpecifications
+              Resource: '*'
 
   ElasticBeanstalkServiceRole:
     Type: 'AWS::IAM::ServiceLinkedRole'
@@ -160,7 +171,6 @@ Resources:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
       ApplicationName: !Ref WebApp
-      EnvironmentName: Production
       OptionSettings: 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: IamInstanceProfile
@@ -172,7 +182,7 @@ Resources:
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
-          Value: c5.large
+          Value: t3.medium
 
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
@@ -181,6 +191,30 @@ Resources:
         - Namespace: aws:autoscaling:asg
           OptionName: MaxSize
           Value: 4
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: Cooldown
+          Value: 60
+
+        - Namespace: aws:autoscaling:trigger
+          OptionName: BreachDuration
+          Value: 1
+
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Period
+          Value: 1
+
+        - Namespace: aws:autoscaling:trigger
+          OptionName: MeasureName
+          Value: CPUUtilization
+
+        - Namespace: aws:autoscaling:trigger
+          OptionName: UpperThreshold
+          Value: 85
+
+        - Namespace: aws:autoscaling:trigger
+          OptionName: LowerThreshold
+          Value: 50
 
         - Namespace: aws:ec2:vpc
           OptionName: VPCId
@@ -202,9 +236,17 @@ Resources:
           OptionName: SecurityGroups
           Value: !Ref WebServerSecurityGroup
 
+        - Namespace: aws:elb:loadbalancer
+          OptionName: CrossZone
+          Value: true
+
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: PORT
           Value: 80
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REGION_NAME
+          Value: !Ref AWS::Region
 
         - Namespace: aws:elasticbeanstalk:container:nodejs
           OptionName: NodeCommand
@@ -250,7 +292,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v4.5.4 running Node.js"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.6.0 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
       - ApplicationInternetGatewayAttachment
@@ -260,10 +302,10 @@ Resources:
     Type: "AWS::RDS::DBInstance"
     Properties:
       AllocatedStorage: 40
-      DBInstanceClass: db.t2.small
+      DBInstanceClass: db.t2.medium
       DBSubnetGroupName: !Ref DatabaseSubnetGroup
       Engine: mariadb
-      EngineVersion: 10.2.15
+      EngineVersion: 10.3.8
       MasterUsername: Administrator 
       MasterUserPassword: WebApp2018!
       MultiAZ: true
@@ -326,8 +368,25 @@ Resources:
           TargetOriginId: MainSite
           ViewerProtocolPolicy: allow-all
           MinTTL: 0
-          MaxTTL: 60
-          DefaultTTL: 30
+          MaxTTL: 600
+          DefaultTTL: 600
+        CacheBehaviors:
+          - PathPattern: data*
+            ForwardedValues: 
+              QueryString: true
+            AllowedMethods: 
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: MainSite
+            ViewerProtocolPolicy: allow-all
+            MinTTL: 0
+            MaxTTL: 0
+            DefaultTTL: 0
         Enabled: true
         Origins:
           - DomainName: !GetAtt WebAppEnvironment.EndpointURL
@@ -392,11 +451,19 @@ Resources:
         S3Bucket: !Ref StagingBucket
         S3Key: loadtest/start.zip
 
+  LoadTestCloudFrontVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref LoadTestApp
+      Description: Locust including load tests configured for the second stage of testing
+      SourceBundle:
+        S3Bucket: !Ref StagingBucket
+        S3Key: loadtest/cloudfront.zip
+
   LoadTestAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
       ApplicationName: !Ref LoadTestApp
-      EnvironmentName: LoadTestingHosts
       OptionSettings: 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: IamInstanceProfile
@@ -408,7 +475,7 @@ Resources:
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
-          Value: c5.xlarge
+          Value: t3.2xlarge
 
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: PORT
@@ -417,6 +484,10 @@ Resources:
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: TARGET_URL
           Value: !Sub "http://${WebAppEnvironment.EndpointURL}"
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: CLOUDFRONT_URL
+          Value: !Sub "http://${PresentationLayerCDN.DomainName}"
 
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
@@ -430,8 +501,103 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.5 running Java 8"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.6 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion
     DependsOn:
       - ElasticBeanstalkServiceRole
       - LoadTestAppInstancePolicy
+
+  PerformanceDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: WebAppPerformance
+      DashboardBody:
+        Fn::Sub:
+          - >
+            {
+              "widgets": [
+                  {
+                      "type": "metric",
+                      "x": 0,
+                      "y": 0,
+                      "width": 18,
+                      "height": 6,
+                      "properties": {
+                          "metrics": [
+                              [ "AWS/ELB", "Latency", "LoadBalancerName", "awseb-e-5-AWSEBLoa-${WebAppEnvName}", { "stat": "Average" } ],
+                              [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
+                              [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
+                          ],
+                          "view": "timeSeries",
+                          "stacked": false,
+                          "region": "us-west-2",
+                          "stat": "Sum",
+                          "period": 60,
+                          "title": "Load Balancer Requests"
+                      }
+                  },
+                  {
+                      "type": "metric",
+                      "x": 0,
+                      "y": 6,
+                      "width": 9,
+                      "height": 6,
+                      "properties": {
+                          "metrics": [
+                              [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DBServer}" ],
+                              [ ".", "DatabaseConnections", ".", ".", { "stat": "Sum", "yAxis": "right" } ]
+                          ],
+                          "view": "timeSeries",
+                          "stacked": false,
+                          "region": "us-west-2",
+                          "stat": "Average",
+                          "period": 60,
+                          "title": "Database Performance",
+                          "yAxis": {
+                              "left": {
+                                  "label": "CPU"
+                              },
+                              "right": {
+                                  "label": "Connection"
+                              }
+                          }
+                      }
+                  },
+                  {
+                      "type": "metric",
+                      "x": 9,
+                      "y": 6,
+                      "width": 9,
+                      "height": 6,
+                      "properties": {
+                          "metrics": [
+                              [ "AWS/RDS", "ReadThroughput", "DBInstanceIdentifier", "${DBServer}" ],
+                              [ ".", "NetworkReceiveThroughput", ".", ".", { "yAxis": "right" } ],
+                              [ ".", "NetworkTransmitThroughput", ".", ".", { "yAxis": "right" } ]
+                          ],
+                          "view": "timeSeries",
+                          "stacked": false,
+                          "region": "us-west-2",
+                          "stat": "Sum",
+                          "period": 60,
+                          "yAxis": {
+                              "left": {
+                                  "label": "IOPS"
+                              },
+                              "right": {
+                                  "label": "Latency"
+                              }
+                          },
+                          "title": "Database read performance"
+                      }
+                  }
+              ]
+            }
+          - {
+              "WebAppEnvName": !Select [4, !Split ["-", !GetAtt WebAppEnvironment.EndpointURL]],
+              "DBServer": !Ref DatabaseServer
+            }
+
+Outputs:
+  Environment:
+    Value: !Select [4, !Split ["-", !GetAtt WebAppEnvironment.EndpointURL]]

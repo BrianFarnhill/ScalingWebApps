@@ -10,11 +10,29 @@ mkdir build/release/loadtest
 cp src/cfn/*.yaml build/release/cfn
 
 # Create the application version for the start of the main web app
-cd src/web/start
+cd src/web
+mkdir zip
+cd zip
+## Start content
+cp -R ../start/. ./
 zip -r ../../../build/release/web/start.zip ./
-cd ../../../
+cd ../
+rm -rf zip
+cd ../../
 
 # Create an app package for the locust load testers
-cd src/loadtest/start
+cd src/loadtest
+mkdir zip
+cd zip
+
+## Start Content
+cp -R ../start/. ./
 zip -r ../../../build/release/loadtest/start.zip ./
-cd ../../../
+
+## CloudFront Content
+cp -R ../cloudfront/. ./
+zip -r ../../../build/release/loadtest/cloudfront.zip ./
+
+cd ../
+rm -rf zip
+cd ../../

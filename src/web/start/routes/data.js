@@ -24,11 +24,13 @@ router.get('/', function(req, res, next) {
             throw err;
         }
 
-        //connection.query("select product_title, count(*) as total_products from auto group by product_title order by total_products DESC limit 100;", function (err2, result, fields) {
-        connection.query("select product_title from auto  limit 10;", function (err2, result, fields) {
+        connection.query("select titles.product_title, titles.product_id, pids.total_reviews from auto titles right join (select product_id, count(product_id) as total_reviews from auto group by product_id order by total_reviews DESC limit 25) pids on titles.product_id = pids.product_id group by product_id, product_title order by pids.total_reviews DESC;", function (err2, result, fields) {
             if (err2) {
                 console.log('Error executing query: ' + err2);
             }
+            res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+            res.header('Expires', '-1');
+            res.header('Pragma', 'no-cache');
             res.json(result);
             connection.release();
         });
