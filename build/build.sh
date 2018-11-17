@@ -16,6 +16,15 @@ cd zip
 ## Start content
 cp -R ../start/. ./
 zip -r ../../../build/release/web/start.zip ./
+
+## Cache Content
+cp -R ../cache/. ./
+zip -r ../../../build/release/web/cache.zip ./
+
+## Serverless API Content
+cp -R ../serverless_api/. ./
+zip -r ../../../build/release/web/serverless_api.zip ./
+
 cd ../
 rm -rf zip
 cd ../../
@@ -32,6 +41,10 @@ zip -r ../../../build/release/loadtest/start.zip ./
 ## CloudFront Content
 cp -R ../cloudfront/. ./
 zip -r ../../../build/release/loadtest/cloudfront.zip ./
+
+## Serverless API Content
+cp -R ../serverless_api/. ./
+zip -r ../../../build/release/loadtest/serverless_api.zip ./
 
 cd ../
 rm -rf zip

@@ -11,7 +11,7 @@ class MyTaskSet(TaskSet):
     def dataPage(self):
         self.client.get("/data")
 
-    @task(1000)
+    @task(100)
     def loadingGif(self):
         self.client.get("/images/loading.gif")
 

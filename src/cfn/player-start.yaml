@@ -167,6 +167,24 @@ Resources:
         S3Bucket: !Ref StagingBucket
         S3Key: web/start.zip
 
+  WebAppCacheVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref WebApp
+      Description: The second version of the source code that uses redis to cache responses
+      SourceBundle:
+        S3Bucket: !Ref StagingBucket
+        S3Key: web/cache.zip
+
+  WebAppAPIVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref WebApp
+      Description: The third version of the source code that uses a serverless API layer
+      SourceBundle:
+        S3Bucket: !Ref StagingBucket
+        S3Key: web/serverless_api.zip
+
   WebAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
@@ -287,6 +305,14 @@ Resources:
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: DB_SERVER
           Value: !GetAtt DatabaseServer.Endpoint.Address
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: API_URL
+          Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
+
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REDIS_ADDRESS
+          Value: !GetAtt CacheCluster.RedisEndpoint.Address
 
         - Namespace: aws:elasticbeanstalk:healthreporting:system
           OptionName: SystemType
@@ -460,6 +486,15 @@ Resources:
         S3Bucket: !Ref StagingBucket
         S3Key: loadtest/cloudfront.zip
 
+  LoadTestAPIVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref LoadTestApp
+      Description: Locust including load tests configured for the third stage of testing
+      SourceBundle:
+        S3Bucket: !Ref StagingBucket
+        S3Key: loadtest/serverless_api.zip
+
   LoadTestAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
@@ -489,6 +524,10 @@ Resources:
           OptionName: CLOUDFRONT_URL
           Value: !Sub "http://${PresentationLayerCDN.DomainName}"
 
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: API_URL
+          Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
+
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
           Value: 1
@@ -507,97 +546,499 @@ Resources:
       - ElasticBeanstalkServiceRole
       - LoadTestAppInstancePolicy
 
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnets used by the web app scaling lab cache
+      SubnetIds:
+        - !Ref ApplicationSubnetA
+        - !Ref ApplicationSubnetB
+        - !Ref ApplicationSubnetC
+
+  CacheSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupDescription: Rules applied to cache instances
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: 192.168.0.0/16
+      VpcId: !Ref ApplicationComputeVPC
+
+  CacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheNodeType: cache.t2.micro
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      Engine: redis
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !Ref CacheSecurityGroup
+
+  DataStoreTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: LoadTestDataStore
+      KeySchema:
+        - AttributeName: product_id
+          KeyType: HASH
+        - AttributeName: total_reviews
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: product_id
+          AttributeType: S
+        - AttributeName: total_reviews
+          AttributeType: N
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  LambdaSetupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: dynamodbAccessRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "*"
+
+  SetupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: >
+          var AWS = require('aws-sdk');
+          const response = require("cfn-response");
+          var ddb = new AWS.DynamoDB();
+
+          exports.handler = async (event, context) => {
+            console.log(JSON.stringify(event));
+            await ddb.batchWriteItem({
+              RequestItems: {
+                "LoadTestDataStore": JSON.parse(event.ResourceProperties.DataToAdd)
+              }
+            }).promise().then(response.send(event, context, "SUCCESS", {}));
+          };
+      Handler: index.handler
+      Role: !GetAtt LambdaSetupRole.Arn
+      Runtime: nodejs8.10
+      Timeout: 60
+
+  LambdaLookupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LookupRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - elasticloadbalancing:*
+              - autoscaling:*
+              - logs:*
+              Resource: "*"
+
+  LookupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: >
+          var AWS = require('aws-sdk'), elb = new AWS.ELB(), autoscaling = new AWS.AutoScaling();
+          const response = require("cfn-response");
+
+          exports.handler = async (event, context) => {
+            console.log(JSON.stringify(event));
+
+            const data = {};
+            await elb.describeLoadBalancers({}).promise().then((r) => {
+                data.ELBName = r.LoadBalancerDescriptions.find(obj => obj.DNSName == event.ResourceProperties.DNSName).LoadBalancerName
+            });
+            await autoscaling.describeAutoScalingGroups({}).promise().then((r) => {
+              data.ASGName = r.AutoScalingGroups.find(obj => obj.LoadBalancerNames.includes(data.ELBName)).AutoScalingGroupName; 
+            });
+            response.send(event, context, "SUCCESS", data);
+          };
+      Handler: index.handler
+      Role: !GetAtt LambdaLookupRole.Arn
+      Runtime: nodejs8.10
+      Timeout: 60
+
+  WebAppConfigValues:
+    Type: Custom::DataLookupFunction
+    DependsOn:
+     - WebAppEnvironment
+    Properties:
+      ServiceToken: !GetAtt LookupFunction.Arn
+      DNSName: !GetAtt WebAppEnvironment.EndpointURL 
+
+  QueryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: >
+          var AWS = require('aws-sdk');
+          var ddb = new AWS.DynamoDB();
+
+          exports.handler = async (event) => {
+          var result = {};
+          await ddb.scan({
+            TableName: 'LoadTestDataStore'
+          }).promise().then((response) => {result = response;});
+          return result;
+          };
+      Handler: index.handler
+      Role: !GetAtt LambdaSetupRole.Arn
+      Runtime: nodejs8.10
+      Timeout: 60
+
+  QueryFunctionMethodPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${APIGateway}/*/GET/"
+      FunctionName: !GetAtt QueryFunction.Arn
+      Principal: apigateway.amazonaws.com
+
+  InitializeDynamoDB:
+    Type: Custom::InitFunction
+    DependsOn:
+     - DataStoreTable
+     - DatabaseServer # There is no good reason for this other than to delay it, as if it hits too quick it doesn't populate
+    Properties:
+      ServiceToken: !GetAtt SetupFunction.Arn
+      DataToAdd: > 
+        [
+          { "PutRequest": { "Item": { "product_id": {"S": "B005NLQAHS" }, "total_reviews": {"N": "4338"}, "product_title": {"S": "BAFX Products 34t5 Bluetooth OBDII Scan Tool for Android Devices"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B000CITK8S" }, "total_reviews": {"N": "3234"}, "product_title": {"S": "Battery Tender Jr. Battery Charger"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B001LHVOVK" }, "total_reviews": {"N": "2539"}, "product_title": {"S": "Autel MaxiScan MS300 CAN Diagnostic Scan Tool for OBDII Vehicles"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00BYH6C1E" }, "total_reviews": {"N": "1886"}, "product_title": {"S": "Drop Stop - The Original Patented Car Seat Gap Filler - Set of 2 (AS SEEN ON SHARK TANK)"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B0052SF0LO" }, "total_reviews": {"N": "1787"}, "product_title": {"S": "Sunforce 82156 60-LED Solar Motion Light"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00068XCQU" }, "total_reviews": {"N": "1762"}, "product_title": {"S": "Battery Tender Plus 021-0128, 1.25 Amp Battery Charger is a Smart Charger, it will Fully Charge and Maintain a Battery at Proper Storage Voltage without the Damaging Effects Caused by Trickle Chargers"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B001AIZ5HY" }, "total_reviews": {"N": "1521"}, "product_title": {"S": "3M 39008 Headlight Lens Restoration System"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00E5OUOCQ" }, "total_reviews": {"N": "1511"}, "product_title": {"S": "X-Shade Jumbo Sun Shade for Car windshield Comes with Cool Non-slip Pad"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B003IS3HV0" }, "total_reviews": {"N": "1497"}, "product_title": {"S": "Leather Honey Leather Conditioner, Best Leather Conditioner Since 1968. For Use on Leather Apparel, Furniture, Auto Interiors, Shoes, Bags and Accessories. Non-Toxic and Made in the USA!"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00080QHMM" }, "total_reviews": {"N": "1493"}, "product_title": {"S": "Accutire MS-4021B Digital Tire Pressure Gauge"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00877SL2M" }, "total_reviews": {"N": "1401"}, "product_title": {"S": "LED Car Lights Bulb"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B000JFJLP6" }, "total_reviews": {"N": "1368"}, "product_title": {"S": "Jump-N-Carry"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00CASDZKC" }, "total_reviews": {"N": "1346"}, "product_title": {"S": "Car Seat Protector with Built-in Trash Can BABYSEATER - Carseat Cover Perfect For Pet, Baby & Toddler Kids. Garbage Basket to Keep Car Clean & Organizer Gift For Christmas"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00429NKWK" }, "total_reviews": {"N": "1268"}, "product_title": {"S": "SYLVANIA Headlight Restoration Kit"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00GSAUHB8" }, "total_reviews": {"N": "1260"}, "product_title": {"S": "sun shade"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00G620ZVU" }, "total_reviews": {"N": "1256"}, "product_title": {"S": "Nilight Driving Fog Light Off Road Led Lights Bar"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B0051D3MP6" }, "total_reviews": {"N": "1226"}, "product_title": {"S": "BLACK+DECKER BM3B 6V and 12V Battery Charger / Maintainer"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B001EAQTRI" }, "total_reviews": {"N": "1212"}, "product_title": {"S": "PAC SNI-1/3.5 3.5-mm Ground Loop Noise Isolator Works with iPod/Zune/iRiver and Others"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00651CLCS" }, "total_reviews": {"N": "1199"}, "product_title": {"S": "AntennaX Off-Road (13-inch) Antenna for (07 thru 18) Jeep Wrangler JK"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B001GJ3FIS" }, "total_reviews": {"N": "1182"}, "product_title": {"S": "Viking 912600 8-Way Heavy Duty Spray Nozzle"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B003VLBPJA" }, "total_reviews": {"N": "1164"}, "product_title": {"S": "Heavy-Duty 15\" Cargo Net for Motorcycles, ATVs - Stretches to 30\""}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00COYNZJ8" }, "total_reviews": {"N": "1161"}, "product_title": {"S": "Star Wars Basic Vehicle Accessory Kit"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B00D9C2CDO" }, "total_reviews": {"N": "1151"}, "product_title": {"S": "Keeper 07208 Black Waterproof Hitch Rack Bag (11 Cubic Feet)"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B005EJGSQ2" }, "total_reviews": {"N": "1150"}, "product_title": {"S": "AmazonBasics 12-Volt Black Heated Seat Cushion with 3-way Temperature Controller"}}}},
+          { "PutRequest": { "Item": { "product_id": {"S": "B000EVYGZA" }, "total_reviews": {"N": "1096"}, "product_title": {"S": "INNOVA 3320 Auto-Ranging Digital Multimeter"}}}}             
+        ]
+
+  APIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Body:
+        swagger: 2.0
+        info:
+          title: ServerlessAPIExample
+        basePath: /latest
+        schemes:
+          - "https"
+        paths:
+          /:
+            get:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              security:
+              - sigv4: []
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                        method.response.header.Access-Control-Allow-Origin: "'*'"
+                uri:
+                  !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryFunction.Arn}/invocations"
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws
+            options:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                type: mock
+                passthroughBehavior: never
+                requestTemplates:
+                  application/json: '{"statusCode": 200}'
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS,DELETE'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                    responseTemplates:
+                      application/json: ''
+
+  APIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref APIDeployment
+      RestApiId: !Ref APIGateway
+      StageName: latest
+
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref APIGateway
+
   PerformanceDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
       DashboardName: WebAppPerformance
-      DashboardBody:
-        Fn::Sub:
-          - >
-            {
-              "widgets": [
-                  {
-                      "type": "metric",
-                      "x": 0,
-                      "y": 0,
-                      "width": 18,
-                      "height": 6,
-                      "properties": {
-                          "metrics": [
-                              [ "AWS/ELB", "Latency", "LoadBalancerName", "awseb-e-5-AWSEBLoa-${WebAppEnvName}", { "stat": "Average" } ],
-                              [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
-                              [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
-                          ],
-                          "view": "timeSeries",
-                          "stacked": false,
-                          "region": "us-west-2",
-                          "stat": "Sum",
-                          "period": 60,
-                          "title": "Load Balancer Requests"
-                      }
-                  },
-                  {
-                      "type": "metric",
-                      "x": 0,
-                      "y": 6,
-                      "width": 9,
-                      "height": 6,
-                      "properties": {
-                          "metrics": [
-                              [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DBServer}" ],
-                              [ ".", "DatabaseConnections", ".", ".", { "stat": "Sum", "yAxis": "right" } ]
-                          ],
-                          "view": "timeSeries",
-                          "stacked": false,
-                          "region": "us-west-2",
-                          "stat": "Average",
-                          "period": 60,
-                          "title": "Database Performance",
-                          "yAxis": {
-                              "left": {
-                                  "label": "CPU"
-                              },
-                              "right": {
-                                  "label": "Connection"
-                              }
+      DashboardBody: !Sub >
+        {
+          "widgets": [
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ELB", "Latency", "LoadBalancerName", "${WebAppConfigValues.ELBName}", { "stat": "Average" } ],
+                          [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
+                          [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Sum",
+                      "period": 60,
+                      "title": "Load Balancer Requests"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 6,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DatabaseServer}" ],
+                          [ ".", "DatabaseConnections", ".", ".", { "stat": "Sum", "yAxis": "right" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "Database Performance",
+                      "yAxis": {
+                          "left": {
+                              "label": "CPU"
+                          },
+                          "right": {
+                              "label": "Connection"
                           }
                       }
-                  },
-                  {
-                      "type": "metric",
-                      "x": 9,
-                      "y": 6,
-                      "width": 9,
-                      "height": 6,
-                      "properties": {
-                          "metrics": [
-                              [ "AWS/RDS", "ReadThroughput", "DBInstanceIdentifier", "${DBServer}" ],
-                              [ ".", "NetworkReceiveThroughput", ".", ".", { "yAxis": "right" } ],
-                              [ ".", "NetworkTransmitThroughput", ".", ".", { "yAxis": "right" } ]
-                          ],
-                          "view": "timeSeries",
-                          "stacked": false,
-                          "region": "us-west-2",
-                          "stat": "Sum",
-                          "period": 60,
-                          "yAxis": {
-                              "left": {
-                                  "label": "IOPS"
-                              },
-                              "right": {
-                                  "label": "Latency"
-                              }
-                          },
-                          "title": "Database read performance"
-                      }
                   }
-              ]
-            }
-          - {
-              "WebAppEnvName": !Select [4, !Split ["-", !GetAtt WebAppEnvironment.EndpointURL]],
-              "DBServer": !Ref DatabaseServer
-            }
+              },
+              {
+                  "type": "metric",
+                  "x": 9,
+                  "y": 6,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/RDS", "ReadThroughput", "DBInstanceIdentifier", "${DatabaseServer}" ],
+                          [ ".", "NetworkReceiveThroughput", ".", ".", { "yAxis": "right" } ],
+                          [ ".", "NetworkTransmitThroughput", ".", ".", { "yAxis": "right" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Sum",
+                      "period": 60,
+                      "yAxis": {
+                          "left": {
+                              "label": "IOPS"
+                          },
+                          "right": {
+                              "label": "Latency"
+                          }
+                      },
+                      "title": "Database read performance"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 9,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${WebAppConfigValues.ASGName}" ],
+                          [ ".", "NetworkPacketsOut", ".", ".", { "yAxis": "right", "stat": "Sum" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "EC2 Performance"
+                  }
+              }
+          ]
+        }
+
+  ServerlessDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: ServerlessPerformance
+      DashboardBody: !Sub >
+        {
+          "widgets": [
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/DynamoDB", "ProvisionedReadCapacityUnits", "TableName", "LoadTestDataStore", { "period": 300 } ],
+                          [ ".", "ConsumedReadCapacityUnits", ".", ".", { "stat": "Sum" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "DynamoDB Read Performance"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 9,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ApiGateway", "IntegrationLatency", "ApiName", "ServerlessAPIExample", { "yAxis": "right", "stat": "Average" } ],
+                          [ ".", "CacheMissCount", ".", "." ],
+                          [ ".", "CacheHitCount", ".", "." ],
+                          [ ".", "Count", ".", "." ],
+                          [ ".", "Latency", ".", ".", { "yAxis": "right", "stat": "Average" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Sum",
+                      "period": 60,
+                      "title": "API Gateway Performance"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 6,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/Lambda", "Invocations", "FunctionName", "${QueryFunction}", { "stat": "Sum" } ],
+                          [ ".", "Duration", ".", ".", { "yAxis": "right" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "Lambda Query Function Performance"
+                  }
+              }
+          ]
+        }
 
 Outputs:
-  Environment:
-    Value: !Select [4, !Split ["-", !GetAtt WebAppEnvironment.EndpointURL]]
+  LoadBalancerUrl:
+    Value: !Sub "http://${WebAppEnvironment.EndpointURL}"
+    Description: The URL of the main load balancer to browse the web app
+  CloudFrontUrl:
+    Value: !Sub "http://${PresentationLayerCDN.DomainName}"
+    Description: The URL of the CloudFront distribution used to distribute the site
+  ApiGatewayUrl:
+    Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
+    Description: The URL of the API Gateway that provides a serverless API layer
+  WebAppDashboard:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=WebAppPerformance"
+    Description: The URL to the dashboard that monitors performance of the main web app
+  ServerlessDashboard:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=ServerlessPerformance"
+    Description: The URL to the dashboard that monitors the performance of the serverless API

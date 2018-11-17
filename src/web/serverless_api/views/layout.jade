@@ -1,0 +1,22 @@
+doctype html
+html(lang="en")
+  head
+    title="Scaling Up Web Applications"
+    
+    meta(harset="text/html;charset=UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1, shrink-to-fit=no")
+
+    link(rel='stylesheet', href='/static/bootstrap/css/bootstrap.min.css')
+    link(rel='stylesheet', href='/stylesheets/style.css')
+  body
+
+    nav(class="navabr navbar-dark bg-dark")
+        a(href="#", class="navbar-brand") re:Invent 2018
+
+    div(class="container-fluid")
+        block content
+    
+    script(src='/static/jquery/jquery.min.js')
+    script(src='/static/popper/popper.min.js')
+    script(src='/static/bootstrap/js/bootstrap.min.js')
+    script(src='/loader')
