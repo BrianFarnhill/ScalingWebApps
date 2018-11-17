@@ -411,8 +411,8 @@ Resources:
             TargetOriginId: MainSite
             ViewerProtocolPolicy: allow-all
             MinTTL: 0
-            MaxTTL: 0
-            DefaultTTL: 0
+            MaxTTL: 1
+            DefaultTTL: 1
         Enabled: true
         Origins:
           - DomainName: !GetAtt WebAppEnvironment.EndpointURL
@@ -956,6 +956,110 @@ Resources:
           ]
         }
 
+  CacheDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: WebAppCachedPerformance
+      DashboardBody: !Sub >
+        {
+          "widgets": [
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ELB", "Latency", "LoadBalancerName", "${WebAppConfigValues.ELBName}", { "stat": "Average" } ],
+                          [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
+                          [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Sum",
+                      "period": 60,
+                      "title": "Load Balancer Requests"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 0,
+                  "y": 6,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DatabaseServer}" ],
+                          [ ".", "DatabaseConnections", ".", ".", { "stat": "Sum", "yAxis": "right" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "Database Performance",
+                      "yAxis": {
+                          "left": {
+                              "label": "CPU"
+                          },
+                          "right": {
+                              "label": "Connection"
+                          }
+                      }
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 9,
+                  "y": 6,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/ElastiCache", "CacheHits", "CacheClusterId", "${CacheCluster}", "CacheNodeId", "0001" ],
+                          [ ".", "CacheMisses", ".", ".", ".", "." ],
+                          [ ".", "CPUUtilization", ".", ".", ".", ".", { "yAxis": "right", "stat": "Average" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Sum",
+                      "period": 60,
+                      "yAxis": {
+                          "left": {
+                              "label": "IOPS"
+                          },
+                          "right": {
+                              "label": "Latency"
+                          }
+                      },
+                      "title": "Redis Performance"
+                  }
+              },
+              {
+                  "type": "metric",
+                  "x": 9,
+                  "y": 0,
+                  "width": 9,
+                  "height": 6,
+                  "properties": {
+                      "metrics": [
+                          [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${WebAppConfigValues.ASGName}" ],
+                          [ ".", "NetworkPacketsOut", ".", ".", { "yAxis": "right", "stat": "Sum" } ]
+                      ],
+                      "view": "timeSeries",
+                      "stacked": false,
+                      "region": "us-west-2",
+                      "stat": "Average",
+                      "period": 60,
+                      "title": "EC2 Performance"
+                  }
+              }
+          ]
+        }
+
   ServerlessDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -1030,6 +1134,9 @@ Outputs:
   LoadBalancerUrl:
     Value: !Sub "http://${WebAppEnvironment.EndpointURL}"
     Description: The URL of the main load balancer to browse the web app
+  LoadTestUrl:
+    Value: !Sub "http://${LoadTestAppEnvironment.EndpointURL}"
+    Description: The URL of the load tester app
   CloudFrontUrl:
     Value: !Sub "http://${PresentationLayerCDN.DomainName}"
     Description: The URL of the CloudFront distribution used to distribute the site
@@ -1039,6 +1146,9 @@ Outputs:
   WebAppDashboard:
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=WebAppPerformance"
     Description: The URL to the dashboard that monitors performance of the main web app
+  WebAppCacheDashboard:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=WebAppCachedPerformance"
+    Description: The URL to the dashboard that monitors performance of the main web app with caching enabled
   ServerlessDashboard:
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=ServerlessPerformance"
     Description: The URL to the dashboard that monitors the performance of the serverless API
