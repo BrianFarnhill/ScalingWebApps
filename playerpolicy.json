@@ -1,0 +1,41 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "apigateway:*",
+                "autoscaling:Describe*",
+                "cloudformation:Describe*",
+                "cloudformation:Get*",
+                "cloudformation:List*",
+                "cloudwatch:*",
+                "dynamodb:BatchGetItem",
+                "dynamodb:Describe*",
+                "dynamodb:Get*",
+                "dynamodb:List*",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "ec2:Describe*",
+                "ec2:Get*",
+                "elasticbeanstalk:Describe*",
+                "elasticbeanstalk:List*",
+                "elasticbeanstalk:Update*",
+                "elasticbeanstalk:ValidateConfigurationSettings",
+                "elasticache:Describe*",
+                "elasticache:List*",
+                "elasticbeanstalk:RequestEnvironmentInfo",
+                "elasticbeanstalk:RetrieveEnvironmentInfo",
+                "elasticbeanstalk:RestartAppServer",
+                "elasticbeanstalk:RebuildEnvironment",
+                "elasticloadbalancing:Describe*",
+                "lambda:Get*",
+                "lambda:List*",
+                "rds:Describe*",
+                "rds:Download*",
+                "rds:List*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
