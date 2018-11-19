@@ -318,7 +318,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v4.6.0 running Node.js"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.7.0 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
       - ApplicationInternetGatewayAttachment
@@ -540,7 +540,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.6 running Java 8"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.7 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion
     DependsOn:
       - ElasticBeanstalkServiceRole
@@ -637,11 +637,16 @@ Resources:
 
           exports.handler = async (event, context) => {
             console.log(JSON.stringify(event));
+            function postResponse(event, context, status, data){
+                return new Promise((resolve, reject) => {
+                    setTimeout(() => response.send(event, context, status, data), 5000)
+                });
+            }
             await ddb.batchWriteItem({
               RequestItems: {
                 "LoadTestDataStore": JSON.parse(event.ResourceProperties.DataToAdd)
               }
-            }).promise().then(response.send(event, context, "SUCCESS", {}));
+            }).promise().then(await postResponse(event, context, "SUCCESS", {}));
           };
       Handler: index.handler
       Role: !GetAtt LambdaSetupRole.Arn
@@ -684,6 +689,12 @@ Resources:
           exports.handler = async (event, context) => {
             console.log(JSON.stringify(event));
 
+            function postResponse(event, context, status, data){
+                return new Promise((resolve, reject) => {
+                    setTimeout(() => response.send(event, context, status, data), 5000)
+                });
+            }
+
             const data = {};
             await elb.describeLoadBalancers({}).promise().then((r) => {
                 data.ELBName = r.LoadBalancerDescriptions.find(obj => obj.DNSName == event.ResourceProperties.DNSName).LoadBalancerName
@@ -691,7 +702,7 @@ Resources:
             await autoscaling.describeAutoScalingGroups({}).promise().then((r) => {
               data.ASGName = r.AutoScalingGroups.find(obj => obj.LoadBalancerNames.includes(data.ELBName)).AutoScalingGroupName; 
             });
-            response.send(event, context, "SUCCESS", data);
+            await postResponse(event, context, "SUCCESS", data);
           };
       Handler: index.handler
       Role: !GetAtt LambdaLookupRole.Arn
