@@ -6,10 +6,10 @@
 4. [Review configuration of Serverless API components, incorporate it in to the load tests](4-serverless.md)
 5. [Conclusion](conclusion.md)
 
-Caching the output of database queries with the use of an in-memory cache is a popular pattern in
-web applications as a mechanism to improve performance. In this next step we will enable Redis
-through the use of the [Amazon ElastiCache service](https://aws.amazon.com/elasticache/). ElastiCache
-provides a managed cache server, so that we don't need to spend time patching it and keeping it
+Caching the output of database queries with the use of an in-memory cache is a popular pattern in web
+applications as a mechanism to improve performance. In this next step we will enable Redis through the
+use of the [Amazon ElastiCache service](https://aws.amazon.com/elasticache/). ElastiCache provides a
+managed cache server, so that we don't need to spend time patching it and keeping it
 available, and we can use it the same as any other Redis server. ElastiCache also offers a MemcahceD
 option, but in this session we will use Redis.
 
@@ -27,10 +27,10 @@ endpoint for the Redis node is though, which will be used in our code.
 ## Updating the code to use ElastiCache
 
 When we implemented CloudFront there was no change to our code, we could just put the service in front
-of our web site and that was it. Now we need to make a small change to our code that queries the
-database, telling it to check the cache first and if there is nothing in the cache, or if the cache has
-expired, to then go to the database as a fallback. Below is a sample of the code from 
-src/web/start/routes/data.js that does the initial query:
+of our web site and that was it. Now we need to make a small change to our code that queries the database,
+telling it to check the cache first and if there is nothing in the cache, or if the cache has expired,
+to then go to the database as a fallback. Below is a sample of the code from src/web/start/routes/data.js
+that does the initial query:
 
     pool.getConnection(function (err, connection) {
         if (err) {
@@ -53,10 +53,10 @@ src/web/start/routes/data.js that does the initial query:
         });
     });
 
-We are using a SQL connection pool here, which is why you will see 15 connection per server when you
-look at the CloudWatch metrics. A connection is acquired from the pool and then the query is issued. In
-This example we are also adding headers to the response that tell clients to not cache this data - in
-practice you could use these to configure how CloudFront would treat your response, they are just
+We are using a SQL connection pool here, which is why you will see 15 connection per server when you look
+at the CloudWatch metrics. A connection is acquired from the pool and then the query is issued. In this
+example we are also adding headers to the response that tell clients to not cache this data - in practice
+you could use these to configure how CloudFront would treat your response, they are just
 configured like this here to demonstrate how additional requests hitting the server are handled.
 
 Now we need to add code to this that will leverage Redis.
@@ -95,37 +95,38 @@ Now we need to add code to this that will leverage Redis.
         }
     });
 
-There are a couple of things to note here - firstly we are testing to see if we can retrieve data
-from Redis using our CacheKey. If we get a result, we simply send that and that is the end of that. If
-there is no response though (which will happen if the cache is empty or expired) then we go back in to
-our normal code. This time though, before we send the response we make a call to client.set to set the
-cache value. Here we are storing the response as a string to retrieve and return - Redis is capable of
-many more complex mechanisms for caching, this is a simple example.
+There are a couple of things to note here - firstly we are testing to see if we can retrieve data from
+Redis using our CacheKey. If we get a result, we simply send that and exit. If there is no response,
+which will happen if the cache is empty or expired, then we go back in to our normal code. However,
+before we send the response we make a call to client.set to set the cache value. Here we are storing the
+response as a string to retrieve and return - Redis is capable of many more complex mechanisms for
+caching, this is a simple example.
 
-Also note that in the call to client.set we are caching the value here for 60 seconds. Now CloudFront
-could be used here to cache the response that goes to the client, but by caching it in memory near
-your application servers you have the option to manipulate or otherwise inspect the response before it
-is sent to CloudFront, which opens up more doors for application specific logic to act on a response.
+Also note that in the call to client.set we are caching the value here for 60 seconds. CloudFront
+could also be used to cache the response that goes to the client. By caching it in memory near
+your application servers you have the option to manipulate or otherwise inspect the response before
+it is sent to CloudFront, which opens up more doors for application specific logic to act on a response.
 
 ## Deploying the updated code to the web application
 
 In much the same way as we deployed the updated load test to locust, we will now use Elastic Beanstalk
 to deploy an updated code package to our main web application. Browse to Elastic Beanstalk again and
-this time select the heading "DemoWebApp" (not the green box, the heading). Choose "Application
-versions" on the left. Select the row that contains "cache.zip", and then click deploy and deploy again
-to start the deployment. Follow the link to the events page to ensure that this completes.
+this time select the heading "DemoWebApp" (not the green box, the heading). Choose "Application versions"
+on the left. Select the row that contains "cache.zip", and then click deploy and deploy again to start
+the deployment. Follow the link to the events page to ensure that this completes.
 
 Click the link at the top of the page to open your web app from the load balancer URL again. Note that
-the first time it loads, the data still takes a second or two to load. Refresh the page though, the
-next load should happen faster. This is in response to the cache returning the data, not the database.
+the first time it loads, the data still takes a second or two to load. Refresh the page though, and
+the next load should happen faster. This is in response to the cache returning the data instead of the
+database.
 
 Return to CloudFormation and open the URL for WebAppCachedDashboard - this is the same dashboard that
 we were looking at previously, however the database IO figures have been replaced with Redis stats.
 Now we are monitoring the cache hits/misses as well as the CPU performance of the cache node.
 
 Spend a few moments observing the performance statistics here as well as back in locust. You'll notice
-now we are sustaining a much larger load while having the /data URL respond in just as quick of a time
-as the rest of the sites contents.
+now we are sustaining a much larger load while having the /data URL respond with a similar latency to
+the rest of the site contents.
 
 To really test the new capabilities, reset locust to target 10,000 users (at a hatch rate of 500), and
 observe the dashboard statistics that you see.

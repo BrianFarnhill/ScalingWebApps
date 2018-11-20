@@ -6,9 +6,9 @@
 4. [Review configuration of Serverless API components, incorporate it in to the load tests](4-serverless.md)
 5. [Conclusion](conclusion.md)
 
-Begin by signing in to your AWS account and browsing to CloudFormation. You will see a template
-called "PlayerStartTemplate" that has been deployed. Go in to it and review its outputs, you will
-see a number of important URLs here:
+Begin by signing in to your AWS account, selecting the US West (Oregon) region, and browsing to
+CloudFormation. You will see a template called "PlayerStartTemplate" that has been deployed. Go
+in to it and review its outputs, you will see a number of important URLs here:
 
 ![A screenshot of the URLs](images/start-1.png)
 
@@ -29,7 +29,7 @@ we will be using throughout the session.
 
 ![A screenshot of the web app](images/start-2.png)
 
-The web app is written in NodeJS and uses a database in MariaDB to display a list of products found
+The web app is written in NodeJS and uses a MariaDB database to display a list of products found
 in our sample dataset, and the number of reviews that each product has. The code for this site is
 included in this repository if you wish to review it in full.
 
@@ -37,9 +37,11 @@ included in this repository if you wish to review it in full.
 
 The web application is configured in [AWS Elastic Beanstalk](https://aws.amazon.com/elasticbeanstalk/)
 which allows for platforms to make use of an [NginX reverse proxy](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/java-se-nginx.html)
-on each server. In the case of this application is has been configured to retrieve a number of
-the static files in use for the solution and send them out before they are requested by the
-NodeJS server, which improves the overall responsiveness of the app.
+on each server.
+
+***For this application NginX has been configured to retrieve a number of
+the static files from the NodeJS server and send them out before they are requested by the
+NodeJS server, which improves the overall responsiveness of the app.***
 
 ### Autoscaling Group configuration
 
@@ -51,7 +53,7 @@ keeps a minimum of 2 servers around but can scale up to 4 based on the CPU load 
 
 The important part to notice here is that the data that is shown on the screen here is loaded
 dynamically through an API call to the "/data" url on the server. This query typically takes 1-2
-seconds to complete and causes some CPU load to occur on the database server. The query is shown
+seconds to complete and results in some CPU load on the database server. The query is shown
 below:
 
     select titles.product_title, titles.product_id, pids.total_reviews from auto titles
@@ -65,22 +67,23 @@ CPU load on the database server when the query runs.
 
 ## Performing an initial load test
 
-Return to CloudFormation in your console and look at the URLs described earlier. Open the URL for
-the LoadTestUrl in a new tab. Here you will see [Locust](http://locust.io) has already been configured
-with a number of tests to run against our test site. The code for these tests are in the src/loadtest
-path of this repository for further review. The tests are designed to simulate users calling traffic to
-the site, making more calls to /index.html and /data and fewer to the image and JavaScript resources
-(as these are more likely to be cached by local proxy endpoints elsewhere after they return HTTP 302
-responses).
+Return to CloudFormation in your console and Open the URL for the LoadTestUrl in a new tab from the
+list of URLs in the Results tab, as described earlier. Here you will see that [Locust](http://locust.io)
+has already been configured with a number of tests to run against our test site. The code for these
+tests is in the src/loadtest path of this repository. The tests are designed to simulate traffic
+from users making requests to the site, making more calls to /index.html and /data and fewer to
+the image and JavaScript resources (as these are more likely to be cached by local proxy endpoints
+elsewhere after they return HTTP 302 responses).
 
 ![A screenshot of the load tester app](images/start-3.png)
 
 To begin, enter 50 users with a hatch rate of 5. This will tell locust to simulate a total of 50
-users browsing the site at the same time, but to ramp it up at 5 users per second. This means that
-10 seconds after the load test starts it will be at its maximum load. Leave this test running for a moment while we observe how the site is performining in the back end.
+users browsing the site at the same time and to ramp up at 5 users per second. This means that
+10 seconds after the load test starts it will be at its maximum load. Leave this test running for
+a moment while we observe how the site is performing in the back end.
 
 Return to CloudFormation in your console and open the URL for the WebAppDashboard in a new tab. This
-dashboard has been configured to monitor your web servers and database server. The dashbboard will
+dashboard has been configured to monitor your web servers and database server. The dashboard will
 auto-refresh every 10 seconds, allowing you to watch the latest data as it flows in to CloudWatch.
 
 ![A screenshot of the cloudwatch dashboard](images/start-4.png)
@@ -88,7 +91,7 @@ auto-refresh every 10 seconds, allowing you to watch the latest data as it flows
 While this load test is running you can see the following metrics:
 
 * Load balancer performance, showing how many hosts are behind the load balancer, the latency of
-  requests passing through it, and the number of requests it is handling each minute
+  responses from the web servers, and the number of requests it is handling each minute
 * EC2 Performance, showing the CPU and network output of the actual web servers behind the load
   balancer
 * Database performance, showing the number of connections that are open to the DB as well as its
@@ -106,13 +109,13 @@ load the performance for end users drops (remember, we saw it load in 1-2 second
 began).
 
 Click on the "Edit" button at the top of the screen in Locust and change the test numbers to 100 users
-and a hatch rate of 10. This will double the traffic to our site, take a moment to observe the changes
+and a hatch rate of 10. This will double the traffic to our site. Take a moment to observe the changes
 to the response time of the URLs locust is testing, you should see another dramatic increase in the
 load time of the /data endpoint.
 
 Now change the number of users in the load test to 500 (hatch rate 50). This should be enough load to
 start seeing the failures number in locust start to go up, as now the /data url is no longer able to
-respond quick enough, which now breaks the application for our users.
+respond quick enough. Our users are now seeing failed requests.
 
 Press the stop button at the top of the screen for locust to end the load test. It's time to start
 making some changes to improve the availability of the site.

@@ -6,44 +6,46 @@
 4. **Review configuration of Serverless API components, incorporate it in to the load tests**
 5. [Conclusion](conclusion.md)
 
-Serverless APIs refer to the use of AWS services to create a web based API where the owner of the API
-doesn't have to maintain any servers at any point in the solution. There are three key services we
-are going to use to demonstrate this concept as part of our app today:
+Serverless APIs refer to the use of AWS services to create a web based service where the owner of
+the service doesn't need to maintain any servers at any point in the solution. There are three
+key services we are going to use to demonstrate this concept as part of our app today:
 
 1. [API Gateway](https://aws.amazon.com/api-gateway/) for managing the front end of our API
-2. [Lambda](https://aws.amazon.com/lambda/) to execute the code that respond to the API calls
-3. [DynamoDB](https://aws.amazon.com/dynamodb/) to store the data that lambda will query to respond
-   with
+2. [Lambda](https://aws.amazon.com/lambda/) to execute the code that responds to the API calls
+3. [DynamoDB](https://aws.amazon.com/dynamodb/) to store the data that lambda will query
 
-The premise of this solution is that API gateway will provide the public point of contact for our API.
-It leverages CloudFront behind the scenes for it's caching, but it also allows you to configure cache
-settings that are not only specific to a URL, but also to specific HTTP verbs also. When our API gets
-called, rather than having a traditional web server available to respond to it, we will run a lambda
-function. Lambda lets you run your code without having to deal with the server, and you only pay for
-the time your code is running (as opposed to paying for the web server even when no load is present).
-Then we we will use DynamoDB as a NoSQL data store for our API - again, this is a managed service so
-you don't need to manage servers here, just put data in and get it back out.
+The premise of this solution is that API gateway will provide the public point of contact for our
+API. It leverages CloudFront behind the scenes for it's caching, but it also allows you to configure
+cache settings that are not only specific to a URL, but also to specific HTTP verbs also. When our
+API gets called, we will run a lambda function rather than having a traditional web server available
+to respond to it. Lambda lets you run your code without having to manage a server, and you only
+pay for the time your code is running, as opposed to paying for the web server even when no load
+is present. Then we we will use DynamoDB as a NoSQL data store for our API - again, this is a
+managed service so you don't need to manage servers here, just put data in and get it back out.
 
 ## Review DynamoDB
 
-In the AWS console go to the DynamoDB page from the services menu. Select "tables" from the left, and
-then choose "LoadTestDataStore". Here you see the details of our data table.
+In the AWS console go to the DynamoDB page from the services menu. Select "tables" from the left,
+and then choose "LoadTestDataStore". Here you see the details of our data table.
 
 ![Screenshot of the DynamoDB management interface](images/serverless-1.png)
 
-Go in to items and you can see the data you will be working with. It is based on the results of the
-query that we have been running throughout this session. As DynamoDB is a NoSQL based data store it
-is not able to perform complex queries like the one we were running, so a popular design paradigm that
-can be used here would be to use DynamoDB as a cache of the results that can be quick scanned and
-retrieved (in much the same way as we used Redis for that function previously).
+Select the items tab and you can see the data you will be working with. It is based on the results
+of the query that we have been running throughout this session. As DynamoDB is a NoSQL based data
+store it is not able to perform complex queries like the one we were running. Instead, a popular
+design pattern that can be used here is to use DynamoDB as a cache of the previously generated
+results that can be quickly scanned and retrieved. We used Redis in much the same way previously,
+but DynamoDB can be a simpler option as there is only a single service to consider compared to
+having both a database and a caching layer.
 
-Select the capacity tab. Here you see how Dynamo scales - through Read and Write units. You pay for the
-amount of read and write throughput that your table needs, and this can be configured to autoscale.
+Select the capacity tab. Here you see how Dynamo scales - through Read and Write units. You pay
+for the amount of read and write throughput that your table needs, and this can be configured
+to autoscale.
 
 ## Review Lambda
 
-In the AWS console go to Lambda in the services menu. Select the function that has "QueryFunction" in
-its name.
+In the AWS console go to Lambda in the services menu. Select the function that has "QueryFunction"
+in its name.
 
 ![Screenshot of the lambda management interface](images/serverless-2.png)
 
@@ -52,9 +54,10 @@ Gateway, and that is has permission to call CloudWatch logs and DynamoDB. You ca
 fine-grained access controls for lambda through IAM policies to make sure your code isn't overly
 privileged.
 
-Beneath this you can see that actual code we are running. In this case we are continuing to use NodeJS
-and we are using the AWS SDK to make a call to DynamoDB to return the results back. Promises and the
-await statement are used here to ensure the query runs before lambda considers the function complete.
+Beneath this you can see that actual code we are running. In this case we are continuing to use
+NodeJS and we are using the AWS SDK to make a call to DynamoDB to return the results back. Promises
+and the await statement are used here to ensure the query runs before lambda considers the function
+complete.
 
 ## Review API Gateway
 
@@ -80,29 +83,29 @@ call out to them specifically.
 
 Stages are where we can configure caching and other settings. Check the box to enable API caching,
 set the cache size to 0.5GB, set the TTL to 60 seconds and disable the per-key cache invalidation.
-These are settings you can explore when you wish to cache results per authenticated user (which opens
-up many more possibilities for how caching could improve the user experience of your site). Scroll
-down and press save to enable the cache.
+These are settings you can explore when you wish to cache results per authenticated user (which
+opens up many more possibilities for how caching could improve the user experience of your site).
+Scroll down and click save to enable the cache.
 
 ## The last load test
 
-Before we can run our last load test we need to deploy new code to both the main web application and
-to the load testing application. Do this through elastic beanstalk as you have done previously for
-each of these, selecting the version that uses "serverless_api.zip" in both applications.
+Before we can run our last load test we need to deploy new code to both the main web application
+and to the load testing application. Do this through elastic beanstalk as you have done previously
+for each of these, selecting the version that uses "serverless_api.zip" in both applications.
 
 The change to the load test is simple, it directs calls that would normally go to the /data endpoint
-to go directly to API Gateway. The change in code on the main web application changes the code so that
-the JavaScript file that is sent to the client tells it to query API Gateway instead of /data. There
-are also some minor tweaks to how it renders the result as the JSON object returned from DynamoDB is
-slightly different.
+to go directly to API Gateway. The update in the main web application changes the code so that
+the JavaScript file that is sent to the client tells it to query API Gateway instead of /data.
+There are also some minor tweaks to how it renders the result, as the JSON object returned from
+DynamoDB is slightly different.
 
 Once your application has been deployed to both the load tester and the main web application, head
-back to Locust and start the load test at 10,000 users again. In locust you will now see /latest
+back to Locust and start the load test at 10,000 users. In locust you will now see /latest
 instead of /data.
 
-While this load test runs, return to CloudFormation and get the URL for the ServerlessDashboard and
-browse to it. Here we are tracking API Gateway, Lambda and DynamoDB use. Allow the test to run for a
-few minutes and observe the response times and throughput of this model.
+While this load test runs, return to CloudFormation and browse to the URL for the ServerlessDashboard.
+Here we are tracking API Gateway, Lambda and DynamoDB use. Allow the test to run for a few minutes
+and observe the response times and throughput of this model.
 
 Also consider that API Gateway gives you a great model to leverage when migrating into a serverless
 API model. API Gateway can call Lambda for specific HTTP methods that you have configured and are
