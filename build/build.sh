@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rm -rf build/release
+lhlkjdsfrm -rf build/release
 
 mkdir build/release
 mkdir build/release/cfn
