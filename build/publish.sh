@@ -1,6 +1,6 @@
 #!/bin/bash
 
-aws s3 sync ./build/release "s3://$PUBLISH_BUCKET_NAME" --delete
+aws s3 sync ./build/release "s3://$PUBLISH_BUCKET_NAME"
 
 STACK_NAME="PlayerStartTemplate"
 aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION_NAME >/dev/null 2>/dev/null
