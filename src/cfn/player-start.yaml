@@ -176,15 +176,6 @@ Resources:
         S3Bucket: !Ref StagingBucket
         S3Key: web/cache.zip
 
-  WebAppAPIVersion:
-    Type: AWS::ElasticBeanstalk::ApplicationVersion
-    Properties:
-      ApplicationName: !Ref WebApp
-      Description: The third version of the source code that uses a serverless API layer
-      SourceBundle:
-        S3Bucket: !Ref StagingBucket
-        S3Key: web/serverless_api.zip
-
   WebAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
@@ -197,6 +188,10 @@ Resources:
         - Namespace: aws:elasticbeanstalk:environment
           OptionName: ServiceRole
           Value: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/elasticbeanstalk.amazonaws.com/AWSServiceRoleForElasticBeanstalk
+
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
@@ -272,7 +267,7 @@ Resources:
 
         - Namespace: aws:elasticbeanstalk:container:nodejs
           OptionName: NodeVersion
-          Value: "8.11.4"
+          Value: "10.16.3"
 
         - Namespace: aws:elasticbeanstalk:container:nodejs
           OptionName: ProxyServer
@@ -307,10 +302,6 @@ Resources:
           Value: !GetAtt DatabaseServer.Endpoint.Address
 
         - Namespace: aws:elasticbeanstalk:application:environment
-          OptionName: API_URL
-          Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
-
-        - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: REDIS_ADDRESS
           Value: !GetAtt CacheCluster.RedisEndpoint.Address
 
@@ -318,7 +309,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v4.7.0 running Node.js"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.11.0 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
       - ApplicationInternetGatewayAttachment
@@ -486,15 +477,6 @@ Resources:
         S3Bucket: !Ref StagingBucket
         S3Key: loadtest/cloudfront.zip
 
-  LoadTestAPIVersion:
-    Type: AWS::ElasticBeanstalk::ApplicationVersion
-    Properties:
-      ApplicationName: !Ref LoadTestApp
-      Description: Locust including load tests configured for the third stage of testing
-      SourceBundle:
-        S3Bucket: !Ref StagingBucket
-        S3Key: loadtest/serverless_api.zip
-
   LoadTestAppEnvironment:
     Type: "AWS::ElasticBeanstalk::Environment"
     Properties:
@@ -510,7 +492,7 @@ Resources:
 
         - Namespace: aws:autoscaling:launchconfiguration
           OptionName: InstanceType
-          Value: t3.2xlarge
+          Value: c5.2xlarge
 
         - Namespace: aws:elasticbeanstalk:application:environment
           OptionName: PORT
@@ -524,10 +506,6 @@ Resources:
           OptionName: CLOUDFRONT_URL
           Value: !Sub "http://${PresentationLayerCDN.DomainName}"
 
-        - Namespace: aws:elasticbeanstalk:application:environment
-          OptionName: API_URL
-          Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
-
         - Namespace: aws:autoscaling:asg
           OptionName: MinSize
           Value: 1
@@ -540,7 +518,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v2.7.7 running Java 8"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v2.10.0 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion
     DependsOn:
       - ElasticBeanstalkServiceRole
@@ -585,6 +563,7 @@ Resources:
     Type: 'AWS::DynamoDB::Table'
     Properties:
       TableName: LoadTestDataStore
+      BillingMode: PAY_PER_REQUEST 
       KeySchema:
         - AttributeName: product_id
           KeyType: HASH
@@ -595,9 +574,6 @@ Resources:
           AttributeType: S
         - AttributeName: total_reviews
           AttributeType: N
-      ProvisionedThroughput:
-        ReadCapacityUnits: 5
-        WriteCapacityUnits: 5
 
   LambdaSetupRole:
     Type: AWS::IAM::Role
@@ -632,7 +608,7 @@ Resources:
       Code:
         ZipFile: >
           var AWS = require('aws-sdk');
-          const response = require("cfn-response");
+          const response = require("./cfn-response");
           var ddb = new AWS.DynamoDB();
 
           exports.handler = async (event, context) => {
@@ -650,7 +626,7 @@ Resources:
           };
       Handler: index.handler
       Role: !GetAtt LambdaSetupRole.Arn
-      Runtime: nodejs8.10
+      Runtime: nodejs10.x
       Timeout: 60
 
   LambdaLookupRole:
@@ -683,9 +659,7 @@ Resources:
     Properties:
       Code:
         ZipFile: >
-          var AWS = require('aws-sdk'), elb = new AWS.ELB(), autoscaling = new AWS.AutoScaling();
-          const response = require("cfn-response");
-
+          var AWS = require('aws-sdk'), elb = new AWS.ELBv2(), autoscaling = new AWS.AutoScaling(); const response = require("./cfn-response");
           exports.handler = async (event, context) => {
             console.log(JSON.stringify(event));
 
@@ -696,17 +670,19 @@ Resources:
             }
 
             const data = {};
+            let lb = undefined
             await elb.describeLoadBalancers({}).promise().then((r) => {
-                data.ELBName = r.LoadBalancerDescriptions.find(obj => obj.DNSName == event.ResourceProperties.DNSName).LoadBalancerName
+                lb = r.LoadBalancers.find(obj => obj.DNSName == event.ResourceProperties.DNSName)
+                data.ELBName = lb.LoadBalancerArn.replace('arn:aws:elasticloadbalancing:us-west-2:709944787479:loadbalancer/', '')
             });
-            await autoscaling.describeAutoScalingGroups({}).promise().then((r) => {
-              data.ASGName = r.AutoScalingGroups.find(obj => obj.LoadBalancerNames.includes(data.ELBName)).AutoScalingGroupName; 
-            });
-            await postResponse(event, context, "SUCCESS", data);
+            await elb.describeTargetGroups({ LoadBalancerArn: lb.LoadBalancerArn }).promise().then((r) => {
+              let tg = r.TargetGroups.find(obj => obj.TargetType === 'instance')
+              data.TGName = tg.TargetGroupArn.substring(tg.TargetGroupArn.indexOf('targetgroup/'))
+            })
           };
       Handler: index.handler
       Role: !GetAtt LambdaLookupRole.Arn
-      Runtime: nodejs8.10
+      Runtime: nodejs10.x
       Timeout: 60
 
   WebAppConfigValues:
@@ -730,20 +706,25 @@ Resources:
           await ddb.scan({
             TableName: 'LoadTestDataStore'
           }).promise().then((response) => {result = response;});
-          return result;
+          return {
+                'statusCode': 200,
+                'statusDescription': '200 OK',
+                'isBase64Encoded': false,
+                'headers': {
+                    'Content-Type': 'application/json'
+                },
+                'body': JSON.stringify(result.Items.map((item) => { return {
+                    'product_id': item.product_id.S,
+                    'total_reviews': item.total_reviews.N,
+                    'product_title': item.product_title.S
+                  }
+                }))
+            };
           };
       Handler: index.handler
       Role: !GetAtt LambdaSetupRole.Arn
-      Runtime: nodejs8.10
+      Runtime: nodejs10.x
       Timeout: 60
-
-  QueryFunctionMethodPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${APIGateway}/*/GET/"
-      FunctionName: !GetAtt QueryFunction.Arn
-      Principal: apigateway.amazonaws.com
 
   InitializeDynamoDB:
     Type: Custom::InitFunction
@@ -781,88 +762,6 @@ Resources:
           { "PutRequest": { "Item": { "product_id": {"S": "B000EVYGZA" }, "total_reviews": {"N": "1096"}, "product_title": {"S": "INNOVA 3320 Auto-Ranging Digital Multimeter"}}}}             
         ]
 
-  APIGateway:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Body:
-        swagger: 2.0
-        info:
-          title: ServerlessAPIExample
-        basePath: /latest
-        schemes:
-          - "https"
-        paths:
-          /:
-            get:
-              consumes:
-                - application/json
-              produces:
-                - application/json
-              responses:
-                '200':
-                  description: 200 response
-                  schema:
-                    $ref: "#/definitions/Empty"
-                  headers:
-                    Access-Control-Allow-Origin:
-                      type: "string"
-              security:
-              - sigv4: []
-              x-amazon-apigateway-integration:
-                responses:
-                  default:
-                    statusCode: 200
-                    responseParameters:
-                        method.response.header.Access-Control-Allow-Origin: "'*'"
-                uri:
-                  !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QueryFunction.Arn}/invocations"
-                passthroughBehavior: when_no_match
-                httpMethod: POST
-                type: aws
-            options:
-              consumes:
-                - application/json
-              produces:
-                - application/json
-              responses:
-                '200':
-                  description: 200 response
-                  schema:
-                    $ref: "#/definitions/Empty"
-                  headers:
-                    Access-Control-Allow-Headers:
-                      type: "string"
-                    Access-Control-Allow-Methods:
-                      type: "string"
-                    Access-Control-Allow-Origin:
-                      type: "string"
-              x-amazon-apigateway-integration:
-                type: mock
-                passthroughBehavior: never
-                requestTemplates:
-                  application/json: '{"statusCode": 200}'
-                responses:
-                  default:
-                    statusCode: 200
-                    responseParameters:
-                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-                      method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS,DELETE'"
-                      method.response.header.Access-Control-Allow-Origin: "'*'"
-                    responseTemplates:
-                      application/json: ''
-
-  APIStage:
-    Type: AWS::ApiGateway::Stage
-    Properties:
-      DeploymentId: !Ref APIDeployment
-      RestApiId: !Ref APIGateway
-      StageName: latest
-
-  APIDeployment:
-    Type: AWS::ApiGateway::Deployment
-    Properties:
-      RestApiId: !Ref APIGateway
-
   PerformanceDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -871,24 +770,23 @@ Resources:
         {
           "widgets": [
               {
-                  "type": "metric",
-                  "x": 0,
-                  "y": 0,
-                  "width": 9,
-                  "height": 6,
-                  "properties": {
-                      "metrics": [
-                          [ "AWS/ELB", "Latency", "LoadBalancerName", "${WebAppConfigValues.ELBName}", { "stat": "Average" } ],
-                          [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
-                          [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
-                      ],
-                      "view": "timeSeries",
-                      "stacked": false,
-                      "region": "us-west-2",
-                      "stat": "Sum",
-                      "period": 60,
-                      "title": "Load Balancer Requests"
-                  }
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 9,
+                "height": 6,
+                "properties": {
+                    "metrics": [
+                        [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${WebAppConfigValues.ELBName}", { "yAxis": "right", "stat": "Sum" } ],
+                        [ ".", "TargetResponseTime", "TargetGroup", "${WebAppConfigValues.TGName}", "LoadBalancer", "${WebAppConfigValues.ELBName}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "us-west-2",
+                    "stat": "Maximum",
+                    "period": 60,
+                    "title": "Load Balancer Requests"
+                }
               },
               {
                   "type": "metric",
@@ -944,25 +842,6 @@ Resources:
                       },
                       "title": "Database read performance"
                   }
-              },
-              {
-                  "type": "metric",
-                  "x": 9,
-                  "y": 0,
-                  "width": 9,
-                  "height": 6,
-                  "properties": {
-                      "metrics": [
-                          [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${WebAppConfigValues.ASGName}" ],
-                          [ ".", "NetworkPacketsOut", ".", ".", { "yAxis": "right", "stat": "Sum" } ]
-                      ],
-                      "view": "timeSeries",
-                      "stacked": false,
-                      "region": "us-west-2",
-                      "stat": "Average",
-                      "period": 60,
-                      "title": "EC2 Performance"
-                  }
               }
           ]
         }
@@ -975,24 +854,23 @@ Resources:
         {
           "widgets": [
               {
-                  "type": "metric",
-                  "x": 0,
-                  "y": 0,
-                  "width": 9,
-                  "height": 6,
-                  "properties": {
-                      "metrics": [
-                          [ "AWS/ELB", "Latency", "LoadBalancerName", "${WebAppConfigValues.ELBName}", { "stat": "Average" } ],
-                          [ ".", "RequestCount", ".", ".", { "yAxis": "right" } ],
-                          [ ".", "HealthyHostCount", ".", ".", { "stat": "Maximum", "yAxis": "left" } ]
-                      ],
-                      "view": "timeSeries",
-                      "stacked": false,
-                      "region": "us-west-2",
-                      "stat": "Sum",
-                      "period": 60,
-                      "title": "Load Balancer Requests"
-                  }
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 9,
+                "height": 6,
+                "properties": {
+                    "metrics": [
+                        [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${WebAppConfigValues.ELBName}", { "yAxis": "right", "stat": "Sum" } ],
+                        [ ".", "TargetResponseTime", "TargetGroup", "${WebAppConfigValues.TGName}", "LoadBalancer", "${WebAppConfigValues.ELBName}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "us-west-2",
+                    "stat": "Maximum",
+                    "period": 60,
+                    "title": "Load Balancer Requests"
+                }
               },
               {
                   "type": "metric",
@@ -1048,25 +926,6 @@ Resources:
                       },
                       "title": "Redis Performance"
                   }
-              },
-              {
-                  "type": "metric",
-                  "x": 9,
-                  "y": 0,
-                  "width": 9,
-                  "height": 6,
-                  "properties": {
-                      "metrics": [
-                          [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${WebAppConfigValues.ASGName}" ],
-                          [ ".", "NetworkPacketsOut", ".", ".", { "yAxis": "right", "stat": "Sum" } ]
-                      ],
-                      "view": "timeSeries",
-                      "stacked": false,
-                      "region": "us-west-2",
-                      "stat": "Average",
-                      "period": 60,
-                      "title": "EC2 Performance"
-                  }
               }
           ]
         }
@@ -1079,8 +938,27 @@ Resources:
         {
           "widgets": [
               {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 9,
+                "height": 6,
+                "properties": {
+                    "metrics": [
+                        [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${WebAppConfigValues.ELBName}", { "yAxis": "right", "stat": "Sum" } ],
+                        [ ".", "TargetResponseTime", "TargetGroup", "${WebAppConfigValues.TGName}", "LoadBalancer", "${WebAppConfigValues.ELBName}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "us-west-2",
+                    "stat": "Maximum",
+                    "period": 60,
+                    "title": "Load Balancer Requests"
+                }
+              },
+              {
                   "type": "metric",
-                  "x": 0,
+                  "x": 9,
                   "y": 0,
                   "width": 9,
                   "height": 6,
@@ -1095,28 +973,6 @@ Resources:
                       "stat": "Average",
                       "period": 60,
                       "title": "DynamoDB Read Performance"
-                  }
-              },
-              {
-                  "type": "metric",
-                  "x": 9,
-                  "y": 0,
-                  "width": 9,
-                  "height": 6,
-                  "properties": {
-                      "metrics": [
-                          [ "AWS/ApiGateway", "IntegrationLatency", "ApiName", "ServerlessAPIExample", { "yAxis": "right", "stat": "Average" } ],
-                          [ ".", "CacheMissCount", ".", "." ],
-                          [ ".", "CacheHitCount", ".", "." ],
-                          [ ".", "Count", ".", "." ],
-                          [ ".", "Latency", ".", ".", { "yAxis": "right", "stat": "Average" } ]
-                      ],
-                      "view": "timeSeries",
-                      "stacked": false,
-                      "region": "us-west-2",
-                      "stat": "Sum",
-                      "period": 60,
-                      "title": "API Gateway Performance"
                   }
               },
               {
@@ -1151,9 +1007,6 @@ Outputs:
   CloudFrontUrl:
     Value: !Sub "http://${PresentationLayerCDN.DomainName}"
     Description: The URL of the CloudFront distribution used to distribute the site
-  ApiGatewayUrl:
-    Value: !Sub "https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com"
-    Description: The URL of the API Gateway that provides a serverless API layer
   WebAppDashboard:
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=WebAppPerformance"
     Description: The URL to the dashboard that monitors performance of the main web app
