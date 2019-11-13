@@ -676,9 +676,10 @@ Resources:
                 data.ELBName = lb.LoadBalancerArn.replace('arn:aws:elasticloadbalancing:us-west-2:709944787479:loadbalancer/', '')
             });
             await elb.describeTargetGroups({ LoadBalancerArn: lb.LoadBalancerArn }).promise().then((r) => {
-              let tg = r.TargetGroups.find(obj => obj.TargetType === 'instance')
-              data.TGName = tg.TargetGroupArn.substring(tg.TargetGroupArn.indexOf('targetgroup/'))
-            })
+              let tg = r.TargetGroups.find(obj => obj.TargetType === 'instance');
+              data.TGName = tg.TargetGroupArn.substring(tg.TargetGroupArn.indexOf('targetgroup/'));
+            });
+            await postResponse(event, context, "SUCCESS", data);
           };
       Handler: index.handler
       Role: !GetAtt LambdaLookupRole.Arn
