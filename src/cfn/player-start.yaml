@@ -673,7 +673,7 @@ Resources:
             let lb = undefined
             await elb.describeLoadBalancers({}).promise().then((r) => {
                 lb = r.LoadBalancers.find(obj => obj.DNSName == event.ResourceProperties.DNSName)
-                data.ELBName = lb.LoadBalancerArn.replace('arn:aws:elasticloadbalancing:us-west-2:709944787479:loadbalancer/', '')
+                data.ELBName = lb.LoadBalancerArn.replace('arn:aws:elasticloadbalancing:' + process.env.AWS_REGION + ':' + event.ResourceProperties.AccountNumber + ':loadbalancer/', '')
             });
             await elb.describeTargetGroups({ LoadBalancerArn: lb.LoadBalancerArn }).promise().then((r) => {
               let tg = r.TargetGroups.find(obj => obj.TargetType === 'instance');
@@ -693,6 +693,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt LookupFunction.Arn
       DNSName: !GetAtt WebAppEnvironment.EndpointURL 
+      AccountNumber: !Sub '${AWS::AccountId}'
 
   QueryFunction:
     Type: AWS::Lambda::Function
