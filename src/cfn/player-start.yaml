@@ -9,11 +9,6 @@ Parameters:
     Default: staging-scalingwebapps
     Description: The name of the S3 bucket that contains the staging resources for this deployment
 
-  DBSnapshotArn:
-    Type: String
-    Default: arn:aws:rds:us-west-2:617055091360:snapshot:amznreviews-indexed
-    Description: The ARN of the snapshot to restore to the RDS instance
-
 Resources:
 
   ApplicationComputeVPC:
@@ -107,12 +102,28 @@ Resources:
     Type: 'AWS::EC2::DHCPOptions'
     Properties:
       DomainNameServers:
-        - 8.8.8.8
+        - AmazonProvidedDNS
+      DomainName: !Sub ${AWS::Region}.compute.internal
 
   ApplicationVPCDHCPOptions:
     Type: 'AWS::EC2::VPCDHCPOptionsAssociation'
     Properties:
       DhcpOptionsId: !Ref ApplicationDefaultDHCPOptions
+      VpcId: !Ref ApplicationComputeVPC
+
+  ApplicationVPCS3EndPoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Resource: "*"
+            Principal: "*"
+      RouteTableIds: 
+        - !Ref ApplicationRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
       VpcId: !Ref ApplicationComputeVPC
 
   WebAppInstanceRole:
@@ -321,15 +332,129 @@ Resources:
       AllocatedStorage: 40
       DBInstanceClass: db.t2.medium
       DBSubnetGroupName: !Ref DatabaseSubnetGroup
-      Engine: mariadb
-      EngineVersion: 10.3.8
+      Engine: postgres
+      EngineVersion: 11.5
+      DBName: amznreviews
       MasterUsername: Administrator 
       MasterUserPassword: WebApp2018!
       MultiAZ: true
-      DBSnapshotIdentifier: !Ref DBSnapshotArn
       StorageType: gp2
+      PubliclyAccessible: true
+      AssociatedRoles:
+        - RoleArn: !GetAtt DatabaseServerRole.Arn
+          FeatureName: s3Import
       VPCSecurityGroups:
         - !Ref DBServerSecurityGroup
+
+  DatabaseServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - rds.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: S3Import
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::hawkea-lab-test2
+                - arn:aws:s3:::hawkea-lab-test2/*
+
+  DBDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: lambdaVPCRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+              Resource: "*"
+
+  DBPopulate:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - ApplicationInternetGatewayAttachment
+    Properties:
+      Code:
+        S3Bucket: staging-scalingwebapps-dev
+        S3Key: deploy/dbpopulate.zip
+      Handler: index.handler
+      Role: !GetAtt DBDeployRole.Arn
+      Runtime: nodejs10.x
+      MemorySize: 512
+      VpcConfig:
+        SubnetIds:
+          - !Ref ApplicationSubnetA
+          - !Ref ApplicationSubnetB
+          - !Ref ApplicationSubnetC
+        SecurityGroupIds:
+          - !Ref DBPopulateSecurityGroup
+      Environment:
+        Variables:
+          PGHOST: !GetAtt DatabaseServer.Endpoint.Address
+          PGUSER: Administrator
+          PGDATABASE: amznreviews
+          PGPASSWORD: WebApp2018!
+      Timeout: 900
+
+  PopulateDatabase:
+    Type: Custom::DBPopulate
+    DependsOn:
+     - LoadTestAppEnvironment # Seems I need to force this to wait for Postgres to be ready to import from S3
+    Properties:
+      ServiceToken: !GetAtt DBPopulate.Arn
+
+  DBPopulateSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      GroupName: DB Populate Security Group
+      GroupDescription: Rules applied to lambda that populates the DB
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 192.168.0.0/16
+      VpcId: !Ref ApplicationComputeVPC
 
   DatabaseSubnetGroup:
     Type: "AWS::RDS::DBSubnetGroup"
@@ -370,8 +495,8 @@ Resources:
           CidrIp: 0.0.0.0/0
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
+          FromPort: 5432
+          ToPort: 5432
           CidrIp: 192.168.0.0/16
       VpcId: !Ref ApplicationComputeVPC
 
@@ -732,7 +857,6 @@ Resources:
     Type: Custom::InitFunction
     DependsOn:
      - DataStoreTable
-     - DatabaseServer # There is no good reason for this other than to delay it, as if it hits too quick it doesn't populate
     Properties:
       ServiceToken: !GetAtt SetupFunction.Arn
       DataToAdd: > 
@@ -998,6 +1122,50 @@ Resources:
               }
           ]
         }
+
+  PlayerLogin:
+    Type: AWS::IAM::User
+    Properties: 
+      LoginProfile: 
+        Password: ScaleMyApp2019!
+      Policies: 
+        - PolicyName: PlayerPolicy
+          PolicyDocument:
+            Statement:
+              Effect: Allow
+              Action:
+                - application-autoscaling:*
+                - autoscaling:*
+                - cloudfront:Get*
+                - cloudfront:List*
+                - cloudformation:Describe*
+                - cloudformation:Get*
+                - cloudformation:List*
+                - cloudwatch:*
+                - dynamodb:BatchGetItem
+                - dynamodb:Describe*
+                - dynamodb:Get*
+                - dynamodb:List*
+                - dynamodb:Scan
+                - dynamodb:Query
+                - ec2:Describe*
+                - ec2:Get*
+                - elasticbeanstalk:*
+                - elasticache:Describe*
+                - elasticache:List*
+                - elasticloadbalancing:*
+                - iam:List*
+                - iam:Get*
+                - lambda:Get*
+                - lambda:List*
+                - lambda:AddPermission
+                - logs:*
+                - rds:Describe*
+                - rds:Download*
+                - rds:List
+                - s3:*
+              Resource: "*"
+      UserName: PlayerOne
 
 Outputs:
   LoadBalancerUrl:
