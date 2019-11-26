@@ -11,7 +11,7 @@ const pool = new Pool({
     user: 'Administrator',
     password: 'WebApp2018!',
     database: 'amznreviews',
-    max: 15,
+    max: 2,
     idleTimeoutMillis: 60 * 60 * 1000,
     connectionTimeoutMillis: 60 * 60 * 1000,
   })
@@ -36,11 +36,11 @@ router.get('/', function(req, res, next) {
                 if (error) {
                     console.log('Error getting postgres pool connection: ' + error);
                 }
-                client.set(cacheKey, JSON.stringify(result), 'EX', 60, redis.print);
+                client.set(cacheKey, JSON.stringify(result.rows), 'EX', 60, redis.print);
                 res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
                 res.header('Expires', '-1');
                 res.header('Pragma', 'no-cache');
-                res.json(result);
+                res.json(result.rows);
             })
         }
     });

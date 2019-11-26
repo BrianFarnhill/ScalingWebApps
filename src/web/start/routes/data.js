@@ -7,7 +7,7 @@ const pool = new Pool({
     user: 'Administrator',
     password: 'WebApp2018!',
     database: 'amznreviews',
-    max: 15,
+    max: 2,
     idleTimeoutMillis: 60 * 60 * 1000,
     connectionTimeoutMillis: 60 * 60 * 1000,
   })
