@@ -410,6 +410,10 @@ Resources:
     DependsOn:
       - ApplicationInternetGatewayAttachment
       - ApplicationVPCS3EndPoint
+      - ApplicationSubnetARouteTableAssociation
+      - ApplicationSubnetBRouteTableAssociation
+      - ApplicationSubnetCRouteTableAssociation
+      - ApplicationPublicTrafficRoute
     Properties:
       Code:
         S3Bucket: !Ref StagingBucket
