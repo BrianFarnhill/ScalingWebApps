@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PLAYER_COUNT=24
+PLAYER_COUNT=1
 export AWS_REGION=$(echo $REGION_NAME)
 
 
@@ -13,7 +13,7 @@ DEFAULT_AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
 ./build/build.sh
 
 i=1
-while [[ $i -le $PLAYER_COUNT ]]
+while [ $i -le $PLAYER_COUNT ]
 do
     CURRENT_UUID=$(uuidgen)
     ACCOUNT_EMAIL="brfarn+${CURRENT_UUID}@amazon.com"
@@ -25,7 +25,7 @@ do
     ACCOUNT_ID="000000000000"
     ## Wait for the account creation to complete
     ACCOUNT_READY=0
-    while [[ $ACCOUNT_READY != 1]]
+    while [ $ACCOUNT_READY -lt 1 ]
     do
         CURRENT_CREATE_STATE=$(aws organizations describe-create-account-status --create-account-request-id $CREATE_ACCOUNT_JOB_ID)
         CREATE_RESULT=$(echo $CURRENT_CREATE_STATE | jq .CreateAccountStatus.State | xargs)
