@@ -320,7 +320,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v4.11.0 running Node.js"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v4.12.0 running Node.js"
       VersionLabel: !Ref WebAppStartVersion
     DependsOn:
       - ApplicationInternetGatewayAttachment
@@ -648,7 +648,7 @@ Resources:
           OptionName: SystemType
           Value: enhanced
 
-      SolutionStackName: "64bit Amazon Linux 2018.03 v2.10.0 running Java 8"
+      SolutionStackName: "64bit Amazon Linux 2018.03 v2.10.1 running Java 8"
       VersionLabel: !Ref LoadTestStartVersion
     DependsOn:
       - ElasticBeanstalkServiceRole
