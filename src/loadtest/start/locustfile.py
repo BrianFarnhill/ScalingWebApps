@@ -31,7 +31,7 @@ class MyTaskSet(TaskSet):
 
     @task(100)
     def mainLogo(self):
-        self.client.get("/images/AWS-reInvent-2018.png")
+        self.client.get("/images/DeckAssets_allup_light_graphs.jpg")
 
     @task(100)
     def jqueryjs(self):

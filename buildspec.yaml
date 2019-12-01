@@ -5,6 +5,7 @@ phases:
   install:
     commands:
       - npm install --prefix src/web/start
+      - npm install --prefix src/dbpopulate
 
   build:
     commands:

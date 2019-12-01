@@ -7,13 +7,13 @@ aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION_NAM
 if [ $? = 0 ]; then
     aws cloudformation update-stack --stack-name $STACK_NAME \
                                     --template-url "https://$PUBLISH_BUCKET_NAME.s3.amazonaws.com/cfn/player-start.yaml" \
-                                    --capabilities CAPABILITY_IAM \
+                                    --capabilities CAPABILITY_NAMED_IAM \
                                     --parameters ParameterKey=StagingBucket,ParameterValue="$PUBLISH_BUCKET_NAME" \
                                     --region $REGION_NAME
 else
     aws cloudformation create-stack --stack-name $STACK_NAME \
                                     --template-url "https://$PUBLISH_BUCKET_NAME.s3.amazonaws.com/cfn/player-start.yaml" \
-                                    --capabilities CAPABILITY_IAM \
+                                    --capabilities CAPABILITY_NAMED_IAM \
                                     --parameters ParameterKey=StagingBucket,ParameterValue="$PUBLISH_BUCKET_NAME" \
                                     --region $REGION_NAME
 fi

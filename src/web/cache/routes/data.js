@@ -1,24 +1,24 @@
 var express = require('express');
 var router = express.Router();
-var mysql = require('mysql');
+const { Pool } = require('pg')
 var redis = require('redis');
 var client = redis.createClient(6379, process.env.REDIS_ADDRESS, {
     no_ready_check: true
  });
 
+const pool = new Pool({
+    host: process.env.DB_SERVER,
+    user: 'Administrator',
+    password: 'WebApp2018!',
+    database: 'amznreviews',
+    max: 2,
+    idleTimeoutMillis: 60 * 60 * 1000,
+    connectionTimeoutMillis: 60 * 60 * 1000,
+  })
 
-var pool = mysql.createPool({
-    connectionLimit : 15,
-    connectTimeout  : 60 * 60 * 1000,
-    acquireTimeout  : 60 * 60 * 1000,
-    timeout         : 60 * 60 * 1000,
-    host            : process.env.DB_SERVER,
-    user            : "builder",
-    password        : "WebApp2018!",
-    database        : "amznreviews"
-});
-
-
+pool.on('error', (err, client) => {
+    console.error('Unexpected error on idle client', err)
+})
 
 router.get('/', function(req, res, next) {
     req.setTimeout(0);
@@ -32,30 +32,20 @@ router.get('/', function(req, res, next) {
             res.header('Pragma', 'no-cache');
             res.send(result);
         } else {
-            pool.getConnection(function (err, connection) {
-                if (err) {
-                    console.log('Error getting mysql pool connection: ' + err);
-                    if (connection) {
-                        connection.release();
-                    }
-                    throw err;
+            pool.query("select titles.product_title, titles.product_id, pids.total_reviews from auto titles right join (select product_id, count(product_id) as total_reviews from auto group by product_id order by total_reviews DESC limit 25) pids on titles.product_id = pids.product_id group by titles.product_id, product_title, pids.total_reviews order by pids.total_reviews DESC;", null, (error, result) => {
+                if (error) {
+                    console.log('Error getting postgres pool connection: ' + error);
                 }
-        
-                connection.query("select titles.product_title, titles.product_id, pids.total_reviews from auto titles right join (select product_id, count(product_id) as total_reviews from auto group by product_id order by total_reviews DESC limit 25) pids on titles.product_id = pids.product_id group by product_id, product_title order by pids.total_reviews DESC;", function (err2, result, fields) {
-                    if (err2) {
-                        console.log('Error executing query: ' + err2);
-                    }
-
-                    client.set(cacheKey, JSON.stringify(result), 'EX', 60, redis.print);
-                    res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
-                    res.header('Expires', '-1');
-                    res.header('Pragma', 'no-cache');
-                    res.json(result);
-                    connection.release();
-                });
-            });
+                client.set(cacheKey, JSON.stringify(result.rows), 'EX', 60, redis.print);
+                res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+                res.header('Expires', '-1');
+                res.header('Pragma', 'no-cache');
+                res.json(result.rows);
+            })
         }
     });
+
+    
 });
 
 module.exports = router;
