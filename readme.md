@@ -1,6 +1,6 @@
 # Scaling Web Applications
 
-This repo contains code and assets used for the 2018 re:Invent builders session "Scale up a web application",
+This repo contains code and assets used for the 2018-19 re:Invent builders session "Scale up a web application",
 delivered by Brian Farnhill and Tony Hawke.
 
 ## Setting this solution up in your own account
@@ -23,7 +23,7 @@ through from there.
 
 ## License details
 
-Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"). You may not use the code in
 this repository except in compliance with the License. A copy of the License is located at

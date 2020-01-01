@@ -10,13 +10,15 @@ Serverless APIs refer to the use of AWS services to create a web based service w
 the service doesn't need to maintain any servers at any point in the solution. There are three
 key services we are going to use to demonstrate this concept as part of our app today:
 
-1. [API Gateway](https://aws.amazon.com/api-gateway/) for managing the front end of our API
+1. [Application Load Balancer](https://aws.amazon.com/elasticloadbalancing/) for managing the front end of our API
 2. [Lambda](https://aws.amazon.com/lambda/) to execute the code that responds to the API calls
 3. [DynamoDB](https://aws.amazon.com/dynamodb/) to store the data that lambda will query
 
-The premise of this solution is that API gateway will provide the public point of contact for our
-API. It leverages CloudFront behind the scenes for it's caching, but it also allows you to configure
-cache settings that are not only specific to a URL, but also to specific HTTP verbs also. When our
+The premise of this solution is that the Application Load Balancer will direct calls to the /data endpoint
+to the lambda function instead of the going to the web server. This is a common approach that is used
+when migrating a legacy monolith application to a microservices model. You can move method by method to
+lambda funciton or containers while leaving the rest of the application as-is. Your users are also going
+to continue interacting with the same endpoints, the change is transparent to them. When our
 API gets called, we will run a lambda function rather than having a traditional web server available
 to respond to it. Lambda lets you run your code without having to manage a server, and you only
 pay for the time your code is running, as opposed to paying for the web server even when no load
@@ -59,62 +61,55 @@ NodeJS and we are using the AWS SDK to make a call to DynamoDB to return the res
 and the await statement are used here to ensure the query runs before lambda considers the function
 complete.
 
-## Review API Gateway
+## Configure the load balancer
 
-Now in the AWS Console go to the "API Gateway" service page. You'll see one API called
-"ServerlessAPIExample". Select this and you will see the management console for the API.
+Next we need to configure our load balancer to send the requests for the /data endpoint to our lambda
+function. Begin by heading to the EC2 page in the AWS console and selecting "Target Groups" (under the
+load balancing heading). The first step here involves creating a new target group for the lambda function.
+Select "Create Target Group" and enter the required details. Give it a name, choose "Lambda function" as the
+target type, and then choose the function with "QueryFunction" from the drop down list as the function. Leave
+the health check box unchecked here as well (but look in to this for any production functions).
 
-![Screenshot of the API Gateway management interface](images/serverless-3.png)
+![Screenshot of the new target group form](images/serverless-4.png)
 
-Here you can see our API just uses the root URL ('/') and has two methods based on HTTP verbs - GET
-and OPTIONS. We have configured the OPTIONS call to allows CORS based calls to this API (review the
-code for this in the main cloudformation template). The GET method has been configured to point to
-the lambda function we just configured. Click on the GET method to see it's configuration.
+Now that we have a target group, we can tell the load balancer to send the required requests to that function.
+Go to the "Load Balancers" link on the left menu (again under the load balancing heading). You should see
+two load balancers here, both created by Elastic Beanstalk. One is a classic load balancer, and the other is an
+application load balancer. The classic one is used by our Locust load test app, and the application one is the
+load balancer that our main application uses. The easiest way to spot the difference here is to look at the "type"
+property on each on. 
 
-![Screenshot of the GET method in API Gateway](images/serverless-4.png)
+![Screenshot of the load balancer list screen](images/serverless-3.png)
 
-Select "Stages" on the left and choose "latest". Stages are a mechanism to allow different versions
-or configurations of your API to exist at the same time. For example you could have a stage called
-'latest' for anyone who wants to just use the latest API version you have, but you could have stages
-for v1.0 or v2.0 or other legacy versions of your API so that applications that depend on them can
-call out to them specifically.
+Select the application load balancer, then choose the "Listeners" tab. Here we can edit the rules about how
+the traffic will be routed once it hits the load balancer. Select the "View/edit rules" link so we can add the
+new target group to the list.
 
-![Screenshot of the stages screenin API Gateway](images/serverless-5.png)
+![Screenshot of the load balancer listeners tab](images/serverless-5.png)
 
-Stages are where we can configure caching and other settings. Check the box to enable API caching,
-set the cache size to 0.5GB, set the TTL to 60 seconds and disable the per-key cache invalidation.
-These are settings you can explore when you wish to cache results per authenticated user (which
-opens up many more possibilities for how caching could improve the user experience of your site).
-Scroll down and click save to enable the cache.
+In the rules editor we can now choose the "add" button (the plus icon at the top), then click "insert rule". The
+new rule will use a path based rule, sending requests to /data to our target group. Select the appropriate options
+to forward these requests then click the save button.
+
+![Screenshot of the load balancer listener rules editor](images/serverless-6.png)
+
 
 ## The last load test
 
-Before we can run our last load test we need to deploy new code to both the main web application
-and to the load testing application. Do this through elastic beanstalk as you have done previously
-for each of these, selecting the version that uses "serverless_api.zip" in both applications.
-
-The change to the load test is simple, it directs calls that would normally go to the /data endpoint
-to go directly to API Gateway. The update in the main web application changes the code so that
-the JavaScript file that is sent to the client tells it to query API Gateway instead of /data.
-There are also some minor tweaks to how it renders the result, as the JSON object returned from
-DynamoDB is slightly different.
-
-Once your application has been deployed to both the load tester and the main web application, head
-back to Locust and start the load test at 10,000 users. In locust you will now see /latest
-instead of /data.
+There is no need to redeploy any code here - as we mentioned earlier, as long as your lambda function
+returns objects with the same structure, the change here will be transparent to your end users. This means
+we can launch right in to running our load test. Head back to Locust and start the load test at 10,000 users.
 
 While this load test runs, return to CloudFormation and browse to the URL for the ServerlessDashboard.
-Here we are tracking API Gateway, Lambda and DynamoDB use. Allow the test to run for a few minutes
+Here we are tracking the ALB, Lambda and DynamoDB use. Allow the test to run for a few minutes
 and observe the response times and throughput of this model.
 
-Also consider that API Gateway gives you a great model to leverage when migrating into a serverless
-API model. API Gateway can call Lambda for specific HTTP methods that you have configured and are
-ready to be serverless, but it can also forward other methods directly to your web servers for
-legacy code that hasn't moved in to the serverless model yet. You can then start being far more
-specific with your cache settings than you could with just CloudFront on its own.
+Also consider that CloudFront is still caching that data endpoint at the same rate of 1 second as per the
+previous configuration. This means I've still got the ability to control caching of my serverless endpoint
+the same as any other endpoint. 
 
-To finish with, set locust to swarm with 20,000 users (at a hatch rate of 1000) and observe the way
-the application behaves. It should now be running just short of 2000 requests per second, and still
+To finish with, set locust to swarm with 30,000 users (at a hatch rate of 1000) and observe the way
+the application behaves. It should now be running just short of 3000 requests per second, and still
 maintaining acceptable response times to all URLs.
 
 [Go to next section](5-conclusion.md)
